@@ -91,11 +91,11 @@ export default function App() {
         throw new Error("기기 연결 객체를 생성하지 못했습니다.");
       }
 
-      // Adb.create는 비동기로 기기와의 초기 핸드쉐이크 및 기능 확인(features)을 완료합니다.
-      // 0.0.22 버전에서 이 함수가 실패할 경우를 대비해 예외 처리를 강화했습니다.
-      addLog(`[시스템] ADB 세션 초기화 중...`);
-      const adb = await Adb.create(connection);
+      // Adb.create 에러 해결: 최신 버전 규격에 따라 생성자 직접 호출
+      addLog(`[시스템] ADB 세션 생성 중...`);
+      const adb = new Adb(connection);
       
+      // 기기와의 통신이 가능한지 기본적인 확인 수행
       if (!adb || !adb.subprocess) {
         throw new Error("ADB 초기화 실패: subprocess 기능을 사용할 수 없습니다.");
       }
@@ -155,7 +155,6 @@ export default function App() {
       return;
     }
     
-    // 안전장치: subprocess 객체가 정의되어 있는지 확인
     if (!adbClient.subprocess) {
       addLog("[오류] ADB 기능이 완전히 초기화되지 않았습니다. 다시 연결해주세요.");
       return;

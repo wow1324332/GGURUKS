@@ -1,5 +1,4 @@
-// 깃허브 App.jsx 파일에 복사/붙여넣기 하실 코드
-// (Canvas 화면은 무시하시고 이 코드만 사용하세요)
+// 깃허브 App.jsx 파일 덮어쓰기용 풀버전 코드
 
 import React, { useState, useEffect, useRef } from 'react';
 import { initializeApp } from "firebase/app";
@@ -7,9 +6,9 @@ import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged }
 import { getFirestore, collection, addDoc, onSnapshot, deleteDoc, doc } from "firebase/firestore";
 import { Terminal, Smartphone, Play, Save, Trash2, Plug, AlertCircle } from 'lucide-react';
 
-// Vercel 배포용 WebADB 라이브러리 (package.json에 "@yume-chan/adb-backend-webusb": "latest" 필수)
+// Vercel 배포용 WebADB 라이브러리 (최신 버전 스펙 반영)
 import { Adb } from '@yume-chan/adb';
-import { AdbDaemonWebUsbDeviceManager } from '@yume-chan/adb-backend-webusb';
+import { AdbDaemonWebUsbDevice } from '@yume-chan/adb-backend-webusb';
 import { Consumable, InspectStream } from '@yume-chan/stream-extra';
 
 const firebaseConfig = {
@@ -33,7 +32,7 @@ export default function App() {
   const [scripts, setScripts] = useState([]);
   const [scriptTitle, setScriptTitle] = useState('');
   
-  // 스마트 스크립트 예시로 변경
+  // 스마트 스크립트 예시
   const [scriptContent, setScriptContent] = useState(
     '# 아파트너 앱 실행\nmonkey -p com.aptner.app 1\nsleep 2\n\n# 글자를 스캔하여 터치하는 스마트 명령어\nclick("아이디")\ntype("my_id_123")\n\nclick("비밀번호")\ntype("password123!")\n\nclick("로그인")'
   );
@@ -79,22 +78,36 @@ export default function App() {
     setLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${message}`]);
   };
 
+  // WebUSB 연결 로직 (최신 라이브러리 스펙에 맞게 브라우저 API 직접 호출 후 연결)
   const connectDevice = async () => {
     try {
-      const Manager = AdbDaemonWebUsbDeviceManager.BROWSER;
-      if (!Manager) {
+      if (!navigator.usb) {
         addLog("[오류] 현재 브라우저가 WebUSB를 지원하지 않습니다. Chrome을 사용해주세요.");
         return;
       }
-      const device = await Manager.requestDevice();
-      if (!device) {
+
+      // 1. 브라우저 기본 WebUSB API로 기기 선택 팝업 호출 (ADB 프로토콜 필터링)
+      const usbDevice = await navigator.usb.requestDevice({
+        filters: [{ classCode: 255, subclassCode: 66, protocolCode: 1 }]
+      });
+
+      if (!usbDevice) {
         addLog("[취소] 기기 선택이 취소되었습니다.");
         return;
       }
-      addLog(`[시스템] ${device.name} 연결 시도 중... 폰 화면에서 'USB 디버깅 허용'을 눌러주세요.`);
+
+      addLog(`[시스템] ${usbDevice.productName || '기기'} 연결 시도 중... 폰 화면에서 'USB 디버깅 허용'을 눌러주세요.`);
       
-      const connection = await device.connect();
+      // 2. 선택된 기기를 yume-chan WebUSB backend 형식으로 변환하여 연결
+      // (filters 파라미터를 함께 전달)
+      const backendDevice = new AdbDaemonWebUsbDevice(
+        usbDevice, 
+        [{ classCode: 255, subclassCode: 66, protocolCode: 1 }]
+      );
+      
+      const connection = await backendDevice.connect();
       const adb = await Adb.create(connection);
+      
       setAdbClient(adb);
       addLog(`[연결 성공] 기기가 성공적으로 연결되었습니다!`);
     } catch (error) {
@@ -140,7 +153,7 @@ export default function App() {
     }
   };
 
-  // --- 스마트 터치(UI 덤프) 로직 추가 ---
+  // --- 스마트 터치(UI 덤프) 로직 ---
   const findTextBounds = async (text) => {
     if (!adbClient) return null;
     
@@ -166,8 +179,6 @@ export default function App() {
       await catProcess.exit;
 
       // 3. 정규식으로 해당 텍스트를 가진 노드의 bounds(좌표) 추출
-      // 예: <node text="로그인" bounds="[100,200][300,400]" ... />
-      // 속성값이 text, content-desc 인 경우를 모두 검색합니다.
       const regex = new RegExp(`(?:text|content-desc)="[^"]*?${text}[^"]*?".*?bounds="\\[(\\d+),(\\d+)\\]\\[(\\d+),(\\d+)\\]"`, 'i');
       const match = xmlContent.match(regex);
 
@@ -238,7 +249,7 @@ export default function App() {
           const textMatch = cmd.match(/type\("([^"]+)"\)/);
           if (textMatch) {
             const inputText = textMatch[1];
-            // 공백을 %s로 변환하는 등 adb input text에 맞는 포맷팅
+            // 공백을 %s로 변환
             const safeText = inputText.replace(/ /g, '%s');
             const typeCmd = `input text '${safeText}'`;
             addLog(`> 텍스트 입력: ${inputText}`);

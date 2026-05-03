@@ -8,7 +8,7 @@
     "build": "vite build",
     "preview": "vite preview"
   },
-"dependencies": {
+  "dependencies": {
     "@yume-chan/adb": "latest",
     "@yume-chan/adb-daemon-webusb": "latest",
     "@yume-chan/stream-extra": "latest",

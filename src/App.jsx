@@ -1,45 +1,12 @@
-{
-  "name": "aptner-automator",
-  "private": true,
-  "version": "1.0.0",
-  "type": "module",
-  "scripts": {
-    "dev": "vite",
-    "build": "vite build",
-    "preview": "vite preview"
-  },
-  "dependencies": {
-    "@yume-chan/adb": "latest",
-    "@yume-chan/adb-daemon-webusb": "latest",
-    "@yume-chan/stream-extra": "latest",
-    "firebase": "^10.8.1",
-    "lucide-react": "^0.344.0",
-    "react": "^18.2.0",
-    "react-dom": "^18.2.0"
-  },
-  "devDependencies": {
-    "@vitejs/plugin-react": "^4.2.1",
-    "autoprefixer": "^10.4.18",
-    "postcss": "^8.4.35",
-    "tailwindcss": "^3.4.1",
-    "vite": "^5.1.4"
-  }
-}
-
-
-2. src/App.jsx (전체 복사)
-
-스마트 클릭(click), 텍스트 입력(type) 기능이 모두 포함된 실기기 제어 코드입니다.
-
 import React, { useState, useEffect, useRef } from 'react';
 import { initializeApp } from "firebase/app";
 import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "firebase/auth";
 import { getFirestore, collection, addDoc, onSnapshot, deleteDoc, doc } from "firebase/firestore";
 import { Terminal, Smartphone, Play, Save, Trash2, Plug, AlertCircle } from 'lucide-react';
 
-// WebADB 라이브러리
+// WebADB 라이브러리 - 가장 안정적인 임포트 방식 적용
 import { Adb } from '@yume-chan/adb';
-import { AdbDaemonWebUsbDeviceManager } from '@yume-chan/adb-daemon-webusb';
+import { AdbDaemonWebUsbDevice } from '@yume-chan/adb-daemon-webusb';
 import { Consumable, InspectStream } from '@yume-chan/stream-extra';
 
 const firebaseConfig = {
@@ -103,32 +70,40 @@ export default function App() {
   }, [logs]);
 
   const addLog = (message) => {
-    // 메시지가 객체인 경우 문자열로 변환하여 에러 방지
     const msg = typeof message === 'string' ? message : JSON.stringify(message);
     setLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${msg}`]);
   };
 
+  // 브라우저 표준 WebUSB API를 직접 호출하여 빌드 에러 우회
   const connectDevice = async () => {
     try {
-      const manager = AdbDaemonWebUsbDeviceManager.BROWSER;
-      if (!manager) {
+      if (!navigator.usb) {
         addLog("[오류] 현재 브라우저가 WebUSB를 지원하지 않습니다.");
         return;
       }
-      const device = await manager.requestDevice();
-      if (!device) return;
 
-      addLog(`[시스템] ${device.name || '기기'} 연결 시도 중...`);
+      // 1. 직접 기기 요청 (ADB 필터 적용)
+      const usbDevice = await navigator.usb.requestDevice({
+        filters: [{ classCode: 255, subclassCode: 66, protocolCode: 1 }]
+      });
+
+      if (!usbDevice) return;
+
+      addLog(`[시스템] ${usbDevice.productName || '기기'} 연결 시도 중...`);
+      
+      // 2. AdbDaemonWebUsbDevice 직접 생성 (Manager를 거치지 않음)
+      const device = new AdbDaemonWebUsbDevice(usbDevice);
       const connection = await device.connect();
       
       if (!connection) {
         throw new Error("기기 연결에 실패했습니다 (Connection undefined)");
       }
 
+      // 3. Adb 인스턴스 생성 (최신 버전 문법)
       const adb = new Adb(connection);
       
       setAdbClient(adb);
-      addLog(`[연결 성공] ${device.name || '기기'} 연결 완료!`);
+      addLog(`[연결 성공] ${usbDevice.productName || '기기'} 연결 완료!`);
     } catch (error) {
       addLog(`[연결 실패] ${error?.message || '알 수 없는 오류가 발생했습니다.'}`);
     }

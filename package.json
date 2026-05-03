@@ -9,9 +9,9 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@yume-chan/adb": "latest",
-    "@yume-chan/adb-daemon-webusb": "latest",
-    "@yume-chan/stream-extra": "latest",
+    "@yume-chan/adb": "0.0.22",
+    "@yume-chan/adb-daemon-webusb": "0.0.22",
+    "@yume-chan/stream-extra": "0.0.22",
     "firebase": "^10.8.1",
     "lucide-react": "^0.344.0",
     "react": "^18.2.0",

@@ -79,33 +79,23 @@ export default function App() {
   };
 
   // WebUSB 연결 로직 (최신 라이브러리 스펙에 맞게 브라우저 API 직접 호출 후 연결)
-  const connectDevice = async () => {
+const connectDevice = async () => {
     try {
-      if (!navigator.usb) {
+      const Manager = AdbDaemonWebUsbDeviceManager.BROWSER;
+      if (!Manager) {
         addLog("[오류] 현재 브라우저가 WebUSB를 지원하지 않습니다. Chrome을 사용해주세요.");
         return;
       }
 
-      // 1. 브라우저 기본 WebUSB API로 기기 선택 팝업 호출 (ADB 프로토콜 필터링)
-      const usbDevice = await navigator.usb.requestDevice({
-        filters: [{ classCode: 255, subclassCode: 66, protocolCode: 1 }]
-      });
-
-      if (!usbDevice) {
+      const device = await Manager.requestDevice();
+      if (!device) {
         addLog("[취소] 기기 선택이 취소되었습니다.");
         return;
       }
 
-      addLog(`[시스템] ${usbDevice.productName || '기기'} 연결 시도 중... 폰 화면에서 'USB 디버깅 허용'을 눌러주세요.`);
+      addLog(`[시스템] ${device.name} 연결 시도 중... 폰 화면에서 'USB 디버깅 허용'을 눌러주세요.`);
       
-      // 2. 선택된 기기를 yume-chan WebUSB backend 형식으로 변환하여 연결
-      // (filters 파라미터를 함께 전달)
-      const backendDevice = new AdbDaemonWebUsbDevice(
-        usbDevice, 
-        [{ classCode: 255, subclassCode: 66, protocolCode: 1 }]
-      );
-      
-      const connection = await backendDevice.connect();
+      const connection = await device.connect();
       const adb = await Adb.create(connection);
       
       setAdbClient(adb);
@@ -114,7 +104,6 @@ export default function App() {
       addLog(`[연결 실패] ${error.message}`);
     }
   };
-
   const disconnectDevice = async () => {
     if (adbClient) {
       try {

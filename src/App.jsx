@@ -8,7 +8,7 @@ import { Terminal, Smartphone, Play, Save, Trash2, Plug, AlertCircle } from 'luc
 
 // Vercel 배포용 WebADB 라이브러리 (최신 버전 스펙 반영)
 import { Adb } from '@yume-chan/adb';
-import { AdbDaemonWebUsbDevice } from '@yume-chan/adb-backend-webusb';
+import { AdbDaemonWebUsbDeviceManager } from '@yume-chan/adb-daemon-webusb';
 import { Consumable, InspectStream } from '@yume-chan/stream-extra';
 
 const firebaseConfig = {

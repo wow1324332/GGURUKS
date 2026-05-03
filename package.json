@@ -10,7 +10,7 @@
   },
 "dependencies": {
     "@yume-chan/adb": "latest",
-    "@yume-chan/adb-backend-webusb": "latest",
+    "@yume-chan/adb-daemon-webusb": "latest",
     "@yume-chan/stream-extra": "latest",
     "firebase": "^10.8.1",
     "lucide-react": "^0.344.0",

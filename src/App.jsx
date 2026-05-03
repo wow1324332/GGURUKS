@@ -1,10 +1,43 @@
+{
+  "name": "aptner-automator",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@yume-chan/adb": "latest",
+    "@yume-chan/adb-daemon-webusb": "latest",
+    "@yume-chan/stream-extra": "latest",
+    "firebase": "^10.8.1",
+    "lucide-react": "^0.344.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.2.1",
+    "autoprefixer": "^10.4.18",
+    "postcss": "^8.4.35",
+    "tailwindcss": "^3.4.1",
+    "vite": "^5.1.4"
+  }
+}
+
+
+2. src/App.jsx (전체 복사)
+
+스마트 클릭(click), 텍스트 입력(type) 기능이 모두 포함된 실기기 제어 코드입니다.
+
 import React, { useState, useEffect, useRef } from 'react';
 import { initializeApp } from "firebase/app";
 import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "firebase/auth";
 import { getFirestore, collection, addDoc, onSnapshot, deleteDoc, doc } from "firebase/firestore";
 import { Terminal, Smartphone, Play, Save, Trash2, Plug, AlertCircle } from 'lucide-react';
 
-// WebADB 라이브러리 (최신 daemon-webusb 패키지 사용)
+// WebADB 라이브러리
 import { Adb } from '@yume-chan/adb';
 import { AdbDaemonWebUsbDeviceManager } from '@yume-chan/adb-daemon-webusb';
 import { Consumable, InspectStream } from '@yume-chan/stream-extra';
@@ -70,7 +103,9 @@ export default function App() {
   }, [logs]);
 
   const addLog = (message) => {
-    setLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${message}`]);
+    // 메시지가 객체인 경우 문자열로 변환하여 에러 방지
+    const msg = typeof message === 'string' ? message : JSON.stringify(message);
+    setLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${msg}`]);
   };
 
   const connectDevice = async () => {
@@ -83,22 +118,27 @@ export default function App() {
       const device = await manager.requestDevice();
       if (!device) return;
 
-      addLog(`[시스템] ${device.name} 연결 시도 중...`);
+      addLog(`[시스템] ${device.name || '기기'} 연결 시도 중...`);
       const connection = await device.connect();
       
-      // qx.create 에러 해결: 최신 버전에서는 Adb.create 대신 new Adb(connection) 사용
+      if (!connection) {
+        throw new Error("기기 연결에 실패했습니다 (Connection undefined)");
+      }
+
       const adb = new Adb(connection);
       
       setAdbClient(adb);
-      addLog(`[연결 성공] ${device.name} 연결 완료!`);
+      addLog(`[연결 성공] ${device.name || '기기'} 연결 완료!`);
     } catch (error) {
-      addLog(`[연결 실패] ${error.message}`);
+      addLog(`[연결 실패] ${error?.message || '알 수 없는 오류가 발생했습니다.'}`);
     }
   };
 
   const disconnectDevice = async () => {
     if (adbClient) {
-      await adbClient.close();
+      try {
+        await adbClient.close();
+      } catch (e) {}
       setAdbClient(null);
       addLog("[시스템] 연결이 해제되었습니다.");
     }
@@ -152,16 +192,22 @@ export default function App() {
           addLog(`> ${s}초 대기...`);
           await new Promise(r => setTimeout(r, s * 1000));
         } else if (cmd.startsWith('click("')) {
-          const target = cmd.match(/click\("([^"]+)"\)/)[1];
-          const pos = await findTextBounds(target);
-          if (pos) {
-            const proc = await adbClient.subprocess.spawn(`input tap ${pos.x} ${pos.y}`);
-            await proc.exit;
+          const targetMatch = cmd.match(/click\("([^"]+)"\)/);
+          if (targetMatch) {
+            const target = targetMatch[1];
+            const pos = await findTextBounds(target);
+            if (pos) {
+              const proc = await adbClient.subprocess.spawn(`input tap ${pos.x} ${pos.y}`);
+              await proc.exit;
+            }
           }
         } else if (cmd.startsWith('type("')) {
-          const txt = cmd.match(/type\("([^"]+)"\)/)[1].replace(/ /g, '%s');
-          const proc = await adbClient.subprocess.spawn(`input text '${txt}'`);
-          await proc.exit;
+          const textMatch = cmd.match(/type\("([^"]+)"\)/);
+          if (textMatch) {
+            const txt = textMatch[1].replace(/ /g, '%s');
+            const proc = await adbClient.subprocess.spawn(`input text '${txt}'`);
+            await proc.exit;
+          }
         } else {
           addLog(`> shell: ${cmd}`);
           const proc = await adbClient.subprocess.spawn(cmd);
@@ -215,7 +261,7 @@ export default function App() {
               <div className="flex items-center gap-2 mb-3"><Terminal className="w-4 h-4 text-emerald-400" /><span className="text-emerald-400 text-xs font-bold uppercase tracking-wider">Log</span></div>
               <div className="h-40 overflow-y-auto font-mono text-xs text-slate-400 space-y-1 custom-scrollbar">
                 {logs.map((log, i) => (
-                  <div key={i} className={log.includes('✅') || log.includes('[연결 성공]') ? 'text-emerald-400' : log.includes('[에러]') || log.includes('[연결 실패]') ? 'text-red-400' : ''}>
+                  <div key={i} className={log?.includes('✅') || log?.includes('[연결 성공]') ? 'text-emerald-400' : log?.includes('[에러]') || log?.includes('[연결 실패]') ? 'text-red-400' : ''}>
                     {log}
                   </div>
                 ))}

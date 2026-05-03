@@ -4,7 +4,7 @@ import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged }
 import { getFirestore, collection, addDoc, onSnapshot, deleteDoc, doc } from "firebase/firestore";
 import { Terminal, Smartphone, Play, Save, Trash2, Plug, AlertCircle } from 'lucide-react';
 
-// WebADB 라이브러리 - 빌드 에러 방지를 위한 임포트 방식
+// WebADB 라이브러리
 import { Adb } from '@yume-chan/adb';
 import * as AdbWebUsb from '@yume-chan/adb-daemon-webusb';
 import { Consumable, InspectStream } from '@yume-chan/stream-extra';
@@ -76,28 +76,30 @@ export default function App() {
 
   const connectDevice = async () => {
     try {
-      // 1. Manager 확인 (addEventListener 에러 방지를 위해 Manager를 통한 접근 권장)
-      const Manager = AdbWebUsb.AdbDaemonWebUsbDeviceManager.BROWSER;
-      if (!Manager) {
+      const manager = AdbWebUsb.AdbDaemonWebUsbDeviceManager.BROWSER;
+      if (!manager) {
         addLog("[오류] 현재 브라우저가 WebUSB를 지원하지 않습니다.");
         return;
       }
-
-      // 2. 기기 선택 요청
-      const device = await Manager.requestDevice();
+      const device = await manager.requestDevice();
       if (!device) return;
 
       addLog(`[시스템] ${device.name || '기기'} 연결 시도 중...`);
-      
-      // 3. 연결 수립
       const connection = await device.connect();
+      
       if (!connection) {
         throw new Error("기기 연결 객체를 생성하지 못했습니다.");
       }
 
-      // 4. Adb 인스턴스 생성 (0.0.22 버전 표준 생성자)
-      const adb = new Adb(connection);
+      // Adb.create는 비동기로 기기와의 초기 핸드쉐이크 및 기능 확인(features)을 완료합니다.
+      // 0.0.22 버전에서 이 함수가 실패할 경우를 대비해 예외 처리를 강화했습니다.
+      addLog(`[시스템] ADB 세션 초기화 중...`);
+      const adb = await Adb.create(connection);
       
+      if (!adb || !adb.subprocess) {
+        throw new Error("ADB 초기화 실패: subprocess 기능을 사용할 수 없습니다.");
+      }
+
       setAdbClient(adb);
       addLog(`[연결 성공] ${device.name || '기기'} 연결 완료!`);
     } catch (error) {
@@ -116,7 +118,7 @@ export default function App() {
   };
 
   const findTextBounds = async (text) => {
-    if (!adbClient) return null;
+    if (!adbClient || !adbClient.subprocess) return null;
     addLog(`> 화면에서 '${text}' 검색 중...`);
     try {
       const dumpProcess = await adbClient.subprocess.spawn('uiautomator dump /sdcard/view.xml');
@@ -148,7 +150,17 @@ export default function App() {
   };
 
   const executeScript = async () => {
-    if (!adbClient) return;
+    if (!adbClient) {
+      addLog("[오류] 기기가 연결되어 있지 않습니다.");
+      return;
+    }
+    
+    // 안전장치: subprocess 객체가 정의되어 있는지 확인
+    if (!adbClient.subprocess) {
+      addLog("[오류] ADB 기능이 완전히 초기화되지 않았습니다. 다시 연결해주세요.");
+      return;
+    }
+
     setIsRunning(true);
     addLog("=================================");
     
@@ -232,7 +244,7 @@ export default function App() {
               <div className="flex items-center gap-2 mb-3"><Terminal className="w-4 h-4 text-emerald-400" /><span className="text-emerald-400 text-xs font-bold uppercase tracking-wider">Log</span></div>
               <div className="h-40 overflow-y-auto font-mono text-xs text-slate-400 space-y-1 custom-scrollbar">
                 {logs.map((log, i) => (
-                  <div key={i} className={log?.includes('✅') || log?.includes('[연결 성공]') ? 'text-emerald-400' : log?.includes('[에러]') || log?.includes('[연결 실패]') ? 'text-red-400' : ''}>
+                  <div key={i} className={log?.includes('✅') || log?.includes('[연결 성공]') ? 'text-emerald-400' : log?.includes('[에러]') || log?.includes('[연결 실패]') || log?.includes('[중단]') ? 'text-red-400' : ''}>
                     {log}
                   </div>
                 ))}

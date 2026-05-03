@@ -1,17 +1,17 @@
+// 깃허브 App.jsx 파일에 복사/붙여넣기 하실 코드
+// (Canvas 화면은 무시하시고 이 코드만 사용하세요)
+
 import React, { useState, useEffect, useRef } from 'react';
 import { initializeApp } from "firebase/app";
 import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "firebase/auth";
 import { getFirestore, collection, addDoc, onSnapshot, deleteDoc, doc } from "firebase/firestore";
 import { Terminal, Smartphone, Play, Save, Trash2, Plug, AlertCircle } from 'lucide-react';
 
-// 실제 기기 제어를 위한 WebADB 라이브러리
+// Vercel 배포용 WebADB 라이브러리 (package.json에 "@yume-chan/adb-backend-webusb": "latest" 필수)
 import { Adb } from '@yume-chan/adb';
-import { AdbDaemonWebUsbDeviceManager } from '@yume-chan/adb-transport-webusb';
+import { AdbDaemonWebUsbDeviceManager } from '@yume-chan/adb-backend-webusb';
 import { Consumable, InspectStream } from '@yume-chan/stream-extra';
 
-// ==========================================
-// 1. Firebase 초기화
-// ==========================================
 const firebaseConfig = {
   apiKey: "AIzaSyCeLR6Mfh1ClXA2YzLYaleF8BolJG31CIA",
   authDomain: "automatics-16a4b.firebaseapp.com",
@@ -29,17 +29,19 @@ const appId = typeof __app_id !== 'undefined' ? __app_id : 'aptner-automator';
 
 export default function App() {
   const [user, setUser] = useState(null);
-  const [adbClient, setAdbClient] = useState(null); // 연결된 ADB 클라이언트 상태
+  const [adbClient, setAdbClient] = useState(null);
   const [scripts, setScripts] = useState([]);
   const [scriptTitle, setScriptTitle] = useState('');
-  const [scriptContent, setScriptContent] = useState('# 아파트너 앱 실행\nmonkey -p com.aptner.app 1\n\n# 2초 대기\nsleep 2\n\n# 특정 좌표 터치 (예: 로그인 버튼)\ninput tap 500 800\n');
-  const [logs, setLogs] = useState(["[시스템] 아파트너 자동화 도구 준비 완료..."]);
+  
+  // 스마트 스크립트 예시로 변경
+  const [scriptContent, setScriptContent] = useState(
+    '# 아파트너 앱 실행\nmonkey -p com.aptner.app 1\nsleep 2\n\n# 글자를 스캔하여 터치하는 스마트 명령어\nclick("아이디")\ntype("my_id_123")\n\nclick("비밀번호")\ntype("password123!")\n\nclick("로그인")'
+  );
+  
+  const [logs, setLogs] = useState(["[시스템] 아파트너 스마트 자동화 도구 준비 완료..."]);
   const [isRunning, setIsRunning] = useState(false);
   const logsEndRef = useRef(null);
 
-  // ==========================================
-  // 2. Firebase 인증 및 데이터 동기화
-  // ==========================================
   useEffect(() => {
     const initAuth = async () => {
       try {
@@ -53,23 +55,19 @@ export default function App() {
       }
     };
     initAuth();
-
     const unsubscribe = onAuthStateChanged(auth, setUser);
     return () => unsubscribe();
   }, []);
 
   useEffect(() => {
     if (!user) return;
-
     const scriptsRef = collection(db, 'artifacts', appId, 'users', user.uid, 'scripts');
-    
     const unsubscribe = onSnapshot(scriptsRef, (snapshot) => {
       const loadedScripts = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       setScripts(loadedScripts);
     }, (err) => {
       addLog(`[DB 오류] 데이터를 불러올 수 없습니다: ${err.message}`);
     });
-
     return () => unsubscribe();
   }, [user]);
 
@@ -77,14 +75,10 @@ export default function App() {
     logsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [logs]);
 
-  // ==========================================
-  // 3. 주요 기능 함수들
-  // ==========================================
   const addLog = (message) => {
     setLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${message}`]);
   };
 
-  // 실제 WebUSB & WebADB 연결 로직
   const connectDevice = async () => {
     try {
       const Manager = AdbDaemonWebUsbDeviceManager.BROWSER;
@@ -92,19 +86,15 @@ export default function App() {
         addLog("[오류] 현재 브라우저가 WebUSB를 지원하지 않습니다. Chrome을 사용해주세요.");
         return;
       }
-
-      // 사용자에게 USB 기기 선택 팝업 띄우기
       const device = await Manager.requestDevice();
       if (!device) {
         addLog("[취소] 기기 선택이 취소되었습니다.");
         return;
       }
-
       addLog(`[시스템] ${device.name} 연결 시도 중... 폰 화면에서 'USB 디버깅 허용'을 눌러주세요.`);
       
       const connection = await device.connect();
       const adb = await Adb.create(connection);
-      
       setAdbClient(adb);
       addLog(`[연결 성공] 기기가 성공적으로 연결되었습니다!`);
     } catch (error) {
@@ -150,7 +140,60 @@ export default function App() {
     }
   };
 
-  // 실제 ADB 스크립 실행 로직
+  // --- 스마트 터치(UI 덤프) 로직 추가 ---
+  const findTextBounds = async (text) => {
+    if (!adbClient) return null;
+    
+    addLog(`> 화면에서 '${text}' 검색 중...`);
+    try {
+      // 1. 화면 덤프 생성 (SD 카드 임시 경로에 저장)
+      const dumpCmd = 'uiautomator dump /sdcard/window_dump.xml';
+      const dumpProcess = await adbClient.subprocess.spawn(dumpCmd);
+      await dumpProcess.stdout.pipeTo(new WritableStream());
+      await dumpProcess.exit;
+
+      // 2. 덤프 파일 읽어오기
+      const catCmd = 'cat /sdcard/window_dump.xml';
+      const catProcess = await adbClient.subprocess.spawn(catCmd);
+      
+      let xmlContent = '';
+      await catProcess.stdout.pipeTo(new WritableStream({
+        write(chunk) {
+          const decoder = new TextDecoder();
+          xmlContent += decoder.decode(chunk);
+        }
+      }));
+      await catProcess.exit;
+
+      // 3. 정규식으로 해당 텍스트를 가진 노드의 bounds(좌표) 추출
+      // 예: <node text="로그인" bounds="[100,200][300,400]" ... />
+      // 속성값이 text, content-desc 인 경우를 모두 검색합니다.
+      const regex = new RegExp(`(?:text|content-desc)="[^"]*?${text}[^"]*?".*?bounds="\\[(\\d+),(\\d+)\\]\\[(\\d+),(\\d+)\\]"`, 'i');
+      const match = xmlContent.match(regex);
+
+      if (match) {
+        const x1 = parseInt(match[1]);
+        const y1 = parseInt(match[2]);
+        const x2 = parseInt(match[3]);
+        const y2 = parseInt(match[4]);
+        
+        // 버튼의 중앙 좌표 계산
+        const centerX = Math.floor((x1 + x2) / 2);
+        const centerY = Math.floor((y1 + y2) / 2);
+        
+        addLog(`[검색 완료] '${text}' 좌표 발견: (${centerX}, ${centerY})`);
+        return { x: centerX, y: centerY };
+      } else {
+        addLog(`[오류] 화면에서 '${text}'를 찾을 수 없습니다.`);
+        return null;
+      }
+    } catch (e) {
+      addLog(`[오류] UI 덤프 실패: ${e.message}`);
+      return null;
+    }
+  };
+  // ------------------------------------
+
   const executeScript = async () => {
     if (!adbClient) {
       addLog("[오류] 먼저 스마트폰을 연결해주세요.");
@@ -169,21 +212,47 @@ export default function App() {
         if (!cmd || cmd.startsWith('#')) continue; 
         
         if (cmd.startsWith('sleep ')) {
-          // sleep 명령어는 브라우저 단에서 처리
           const seconds = parseFloat(cmd.split(' ')[1]);
           addLog(`> 대기 중: ${seconds}초...`);
           await new Promise(r => setTimeout(r, seconds * 1000));
+        
+        // 스마트 클릭 명령어 처리 (예: click("로그인"))
+        } else if (cmd.startsWith('click(')) {
+          const textMatch = cmd.match(/click\("([^"]+)"\)/);
+          if (textMatch) {
+            const targetText = textMatch[1];
+            const coords = await findTextBounds(targetText);
+            
+            if (coords) {
+              const tapCmd = `input tap ${coords.x} ${coords.y}`;
+              addLog(`> 터치 실행: ${tapCmd}`);
+              const tapProcess = await adbClient.subprocess.spawn(tapCmd);
+              await tapProcess.stdout.pipeTo(new WritableStream());
+              await tapProcess.exit;
+              await new Promise(r => setTimeout(r, 500)); // 터치 후 잠시 대기
+            }
+          }
+        
+        // 스마트 텍스트 입력 처리 (예: type("my_id"))
+        } else if (cmd.startsWith('type(')) {
+          const textMatch = cmd.match(/type\("([^"]+)"\)/);
+          if (textMatch) {
+            const inputText = textMatch[1];
+            // 공백을 %s로 변환하는 등 adb input text에 맞는 포맷팅
+            const safeText = inputText.replace(/ /g, '%s');
+            const typeCmd = `input text '${safeText}'`;
+            addLog(`> 텍스트 입력: ${inputText}`);
+            const typeProcess = await adbClient.subprocess.spawn(typeCmd);
+            await typeProcess.stdout.pipeTo(new WritableStream());
+            await typeProcess.exit;
+            await new Promise(r => setTimeout(r, 500));
+          }
+
+        // 일반 ADB 쉘 명령어 처리
         } else {
-          // 실제 ADB shell 명령 전송
           addLog(`> adb shell ${cmd}`);
           const process = await adbClient.subprocess.spawn(cmd);
-          
-          // 명령어 실행 완료 대기
-          await process.stdout.pipeTo(new WritableStream({
-            write(chunk) {
-               // 콘솔 출력값이 필요하다면 여기서 파싱 가능
-            }
-          }));
+          await process.stdout.pipeTo(new WritableStream());
           await process.exit;
         }
       }
@@ -200,14 +269,13 @@ export default function App() {
     <div className="min-h-screen bg-slate-50 p-4 md:p-8 font-sans text-slate-800">
       <div className="max-w-6xl mx-auto space-y-6">
         
-        {/* 헤더 */}
         <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 flex flex-col md:flex-row justify-between items-center gap-4">
           <div>
             <h1 className="text-2xl font-bold text-slate-900 flex items-center gap-2">
               <Smartphone className="w-7 h-7 text-indigo-600" />
-              아파트너 자동화 컨트롤러
+              아파트너 스마트 자동화 툴
             </h1>
-            <p className="text-sm text-slate-500 mt-1">WebUSB & WebADB 기반 실기기 제어</p>
+            <p className="text-sm text-slate-500 mt-1">UI 텍스트 스캔 및 WebUSB 기반 실기기 제어</p>
           </div>
           <div className="flex items-center gap-3">
             {adbClient ? (
@@ -223,7 +291,6 @@ export default function App() {
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* 스크립트 목록 */}
           <div className="lg:col-span-1 space-y-4 bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
             <h2 className="text-lg font-semibold flex items-center gap-2 mb-4">
               <Save className="w-5 h-5 text-slate-500" /> 클라우드 스크립트
@@ -257,7 +324,6 @@ export default function App() {
             )}
           </div>
 
-          {/* 에디터 & 터미널 */}
           <div className="lg:col-span-2 space-y-6">
             <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 space-y-4">
               <div className="flex justify-between items-center">
@@ -272,7 +338,7 @@ export default function App() {
               </div>
               <textarea
                 value={scriptContent} onChange={(e) => setScriptContent(e.target.value)}
-                className="w-full h-48 p-4 bg-slate-900 text-slate-300 font-mono text-sm rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                className="w-full h-64 p-4 bg-slate-900 text-slate-300 font-mono text-sm rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 spellCheck="false"
               />
               <div className="flex justify-end">

@@ -4,9 +4,9 @@ import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged }
 import { getFirestore, collection, addDoc, onSnapshot, deleteDoc, doc } from "firebase/firestore";
 import { Terminal, Smartphone, Play, Save, Trash2, Plug, AlertCircle } from 'lucide-react';
 
-// WebADB 라이브러리 - 가장 안정적인 임포트 방식 적용
+// WebADB 라이브러리 - 빌드 에러 방지를 위한 임포트 방식
 import { Adb } from '@yume-chan/adb';
-import { AdbDaemonWebUsbDevice } from '@yume-chan/adb-daemon-webusb';
+import * as AdbWebUsb from '@yume-chan/adb-daemon-webusb';
 import { Consumable, InspectStream } from '@yume-chan/stream-extra';
 
 const firebaseConfig = {
@@ -74,36 +74,32 @@ export default function App() {
     setLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${msg}`]);
   };
 
-  // 브라우저 표준 WebUSB API를 직접 호출하여 빌드 에러 우회
   const connectDevice = async () => {
     try {
-      if (!navigator.usb) {
+      // 1. Manager 확인 (addEventListener 에러 방지를 위해 Manager를 통한 접근 권장)
+      const Manager = AdbWebUsb.AdbDaemonWebUsbDeviceManager.BROWSER;
+      if (!Manager) {
         addLog("[오류] 현재 브라우저가 WebUSB를 지원하지 않습니다.");
         return;
       }
 
-      // 1. 직접 기기 요청 (ADB 필터 적용)
-      const usbDevice = await navigator.usb.requestDevice({
-        filters: [{ classCode: 255, subclassCode: 66, protocolCode: 1 }]
-      });
+      // 2. 기기 선택 요청
+      const device = await Manager.requestDevice();
+      if (!device) return;
 
-      if (!usbDevice) return;
-
-      addLog(`[시스템] ${usbDevice.productName || '기기'} 연결 시도 중...`);
+      addLog(`[시스템] ${device.name || '기기'} 연결 시도 중...`);
       
-      // 2. AdbDaemonWebUsbDevice 직접 생성 (Manager를 거치지 않음)
-      const device = new AdbDaemonWebUsbDevice(usbDevice);
+      // 3. 연결 수립
       const connection = await device.connect();
-      
       if (!connection) {
-        throw new Error("기기 연결에 실패했습니다 (Connection undefined)");
+        throw new Error("기기 연결 객체를 생성하지 못했습니다.");
       }
 
-      // 3. Adb 인스턴스 생성 (최신 버전 문법)
+      // 4. Adb 인스턴스 생성 (0.0.22 버전 표준 생성자)
       const adb = new Adb(connection);
       
       setAdbClient(adb);
-      addLog(`[연결 성공] ${usbDevice.productName || '기기'} 연결 완료!`);
+      addLog(`[연결 성공] ${device.name || '기기'} 연결 완료!`);
     } catch (error) {
       addLog(`[연결 실패] ${error?.message || '알 수 없는 오류가 발생했습니다.'}`);
     }

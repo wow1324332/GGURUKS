@@ -85,7 +85,10 @@ export default function App() {
 
       addLog(`[시스템] ${device.name} 연결 시도 중...`);
       const connection = await device.connect();
-      const adb = await Adb.create(connection);
+      
+      // qx.create 에러 해결: 최신 버전에서는 Adb.create 대신 new Adb(connection) 사용
+      const adb = new Adb(connection);
+      
       setAdbClient(adb);
       addLog(`[연결 성공] ${device.name} 연결 완료!`);
     } catch (error) {
@@ -152,14 +155,17 @@ export default function App() {
           const target = cmd.match(/click\("([^"]+)"\)/)[1];
           const pos = await findTextBounds(target);
           if (pos) {
-            await (await adbClient.subprocess.spawn(`input tap ${pos.x} ${pos.y}`)).exit;
+            const proc = await adbClient.subprocess.spawn(`input tap ${pos.x} ${pos.y}`);
+            await proc.exit;
           }
         } else if (cmd.startsWith('type("')) {
           const txt = cmd.match(/type\("([^"]+)"\)/)[1].replace(/ /g, '%s');
-          await (await adbClient.subprocess.spawn(`input text '${txt}'`)).exit;
+          const proc = await adbClient.subprocess.spawn(`input text '${txt}'`);
+          await proc.exit;
         } else {
           addLog(`> shell: ${cmd}`);
-          await (await adbClient.subprocess.spawn(cmd)).exit;
+          const proc = await adbClient.subprocess.spawn(cmd);
+          await proc.exit;
         }
       }
       addLog("✅ 모든 작업 완료.");
@@ -185,12 +191,12 @@ export default function App() {
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <aside className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm">
-            <h3 className="font-bold mb-4">스크립트 목록</h3>
+            <h3 className="font-bold mb-4 text-slate-700">스크립트 목록</h3>
             <div className="space-y-2">
               {scripts.map(s => (
-                <div key={s.id} className="p-3 bg-slate-50 rounded-xl flex justify-between items-center">
-                  <button onClick={() => {setScriptTitle(s.title); setScriptContent(s.content);}} className="truncate flex-1 text-left">{s.title}</button>
-                  <button onClick={() => deleteScript(s.id)} className="text-slate-300 hover:text-red-500"><Trash2 className="w-4 h-4" /></button>
+                <div key={s.id} className="p-3 bg-slate-50 rounded-xl flex justify-between items-center group">
+                  <button onClick={() => {setScriptTitle(s.title); setScriptContent(s.content);}} className="truncate flex-1 text-left font-medium hover:text-indigo-600 transition-colors">{s.title}</button>
+                  <button onClick={() => deleteScript(s.id)} className="text-slate-300 hover:text-red-500 transition-colors"><Trash2 className="w-4 h-4" /></button>
                 </div>
               ))}
             </div>
@@ -198,17 +204,21 @@ export default function App() {
 
           <main className="lg:col-span-2 space-y-6">
             <section className="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm space-y-4">
-              <input type="text" value={scriptTitle} onChange={e => setScriptTitle(e.target.value)} placeholder="제목" className="w-full text-lg font-bold border-b outline-none pb-1" />
-              <textarea value={scriptContent} onChange={e => setScriptContent(e.target.value)} className="w-full h-64 p-4 bg-slate-900 text-slate-300 font-mono text-sm rounded-xl outline-none" spellCheck="false" />
-              <button onClick={executeScript} disabled={isRunning || !adbClient} className="w-full py-3 bg-indigo-600 text-white rounded-xl font-bold">
+              <input type="text" value={scriptTitle} onChange={e => setScriptTitle(e.target.value)} placeholder="제목" className="w-full text-lg font-bold border-b outline-none pb-1 focus:border-indigo-500" />
+              <textarea value={scriptContent} onChange={e => setScriptContent(e.target.value)} className="w-full h-64 p-4 bg-slate-900 text-slate-300 font-mono text-sm rounded-xl outline-none focus:ring-2 focus:ring-indigo-500" spellCheck="false" />
+              <button onClick={executeScript} disabled={isRunning || !adbClient} className={`w-full py-3 rounded-xl font-bold transition-all ${isRunning || !adbClient ? 'bg-slate-100 text-slate-400 cursor-not-allowed' : 'bg-indigo-600 text-white hover:bg-indigo-700 shadow-lg shadow-indigo-100'}`}>
                 {isRunning ? '실행 중...' : '스크립트 실행'}
               </button>
             </section>
 
-            <section className="bg-slate-900 p-5 rounded-2xl border border-slate-800">
-              <div className="flex items-center gap-2 mb-3"><Terminal className="w-4 h-4 text-emerald-400" /><span className="text-emerald-400 text-xs font-bold uppercase">Log</span></div>
+            <section className="bg-slate-900 p-5 rounded-2xl border border-slate-800 shadow-inner">
+              <div className="flex items-center gap-2 mb-3"><Terminal className="w-4 h-4 text-emerald-400" /><span className="text-emerald-400 text-xs font-bold uppercase tracking-wider">Log</span></div>
               <div className="h-40 overflow-y-auto font-mono text-xs text-slate-400 space-y-1 custom-scrollbar">
-                {logs.map((log, i) => <div key={i}>{log}</div>)}
+                {logs.map((log, i) => (
+                  <div key={i} className={log.includes('✅') || log.includes('[연결 성공]') ? 'text-emerald-400' : log.includes('[에러]') || log.includes('[연결 실패]') ? 'text-red-400' : ''}>
+                    {log}
+                  </div>
+                ))}
                 <div ref={logsEndRef} />
               </div>
             </section>

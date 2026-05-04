@@ -122,22 +122,39 @@ export default function App() {
 
   const connectDevice = async () => {
     try {
+      // 1. 기존 연결이 남아있다면 확실히 닫기 시도
+      if (adbClient) {
+        await disconnectDevice();
+        await new Promise(r => setTimeout(r, 500));
+      }
+
       const manager = AdbWebUsb.AdbDaemonWebUsbDeviceManager.BROWSER;
       const device = await manager.requestDevice();
       if (!device) return;
+
       addLog(`[시스템] ${device.name} 연결 시도...`);
+      
       const connection = await device.connect();
       const adb = new Adb(connection);
+      
       setAdbClient(adb);
       addLog(`[시스템] 기기 연결 성공!`);
     } catch (error) {
-      addLog(`[연결 실패] ${error.message}`);
+      // claimInterface 오류 핸들링을 위한 가이드 로그 추가
+      if (error.message.includes('claimInterface')) {
+        addLog(`[연결 실패] 다른 탭이나 프로그램이 폰을 사용 중입니다.`);
+        addLog(`> 크롬의 다른 탭이나 Android Studio를 닫고 다시 시도하세요.`);
+      } else {
+        addLog(`[연결 실패] ${error.message}`);
+      }
     }
   };
 
   const disconnectDevice = async () => {
     if (adbClient) {
-      await adbClient.close();
+      try {
+        await adbClient.close();
+      } catch (e) {}
       setAdbClient(null);
       addLog("[시스템] 연결이 해제되었습니다.");
     }
@@ -262,7 +279,7 @@ export default function App() {
             <section className="bg-[#1e1e1e] p-5 rounded-2xl border border-slate-800 shadow-inner">
               <div className="flex items-center gap-2 mb-3"><Terminal className="w-4 h-4 text-emerald-400" /><span className="text-emerald-400 text-xs font-bold uppercase tracking-wider">Log</span></div>
               <div className="h-40 overflow-y-auto font-mono text-xs text-slate-400 space-y-1 custom-scrollbar">
-                {logs.map((log, i) => <div key={i} className={log?.includes('✅') || log?.includes('성공') ? 'text-emerald-400' : log?.includes('오류') ? 'text-red-400' : ''}>{log}</div>)}
+                {logs.map((log, i) => <div key={i} className={log?.includes('✅') || log?.includes('성공') ? 'text-emerald-400' : log?.includes('오류') || log?.includes('실패') ? 'text-red-400' : ''}>{log}</div>)}
                 <div ref={logsEndRef} />
               </div>
             </section>

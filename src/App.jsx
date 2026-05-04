@@ -91,7 +91,6 @@ export default function App() {
 5. 결과값은 오직 코드만 출력하세요. 설명은 필요 없습니다.`;
 
     try {
-      // 확인된 최신 모델명 gemini-2.5-flash 적용
       const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -122,7 +121,6 @@ export default function App() {
 
   const connectDevice = async () => {
     try {
-      // 1. 기존 연결이 남아있다면 확실히 닫기 시도
       if (adbClient) {
         await disconnectDevice();
         await new Promise(r => setTimeout(r, 500));
@@ -133,17 +131,21 @@ export default function App() {
       if (!device) return;
 
       addLog(`[시스템] ${device.name} 연결 시도...`);
-      
       const connection = await device.connect();
-      const adb = new Adb(connection);
       
+      // 'features' 에러 해결: 생성자 대신 Adb.create 팩토리 메서드 사용 (핸드쉐이크 포함)
+      addLog(`[시스템] ADB 세션 초기화 및 핸드쉐이크 중...`);
+      const adb = await Adb.create(connection);
+      
+      if (!adb || !adb.subprocess) {
+        throw new Error("ADB 초기화에 실패했습니다 (subprocess 미지원)");
+      }
+
       setAdbClient(adb);
-      addLog(`[시스템] 기기 연결 성공!`);
+      addLog(`[시스템] 기기 연결 및 초기화 성공!`);
     } catch (error) {
-      // claimInterface 오류 핸들링을 위한 가이드 로그 추가
       if (error.message.includes('claimInterface')) {
-        addLog(`[연결 실패] 다른 탭이나 프로그램이 폰을 사용 중입니다.`);
-        addLog(`> 크롬의 다른 탭이나 Android Studio를 닫고 다시 시도하세요.`);
+        addLog(`[연결 실패] 다른 프로그램이 폰을 사용 중입니다. 탭을 닫고 다시 시도하세요.`);
       } else {
         addLog(`[연결 실패] ${error.message}`);
       }
@@ -186,6 +188,8 @@ export default function App() {
 
   const executeScript = async () => {
     if (!adbClient) return addLog("[오류] 먼저 기기를 연결하세요.");
+    if (!adbClient.subprocess) return addLog("[오류] ADB 세션이 올바르게 초기화되지 않았습니다.");
+    
     setIsRunning(true);
     addLog("=================================");
     

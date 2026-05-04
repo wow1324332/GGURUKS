@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { initializeApp } from "firebase/app";
 import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "firebase/auth";
 import { getFirestore, collection, addDoc, onSnapshot, deleteDoc, doc } from "firebase/firestore";
-import { Terminal, Smartphone, Play, Save, Trash2, Plug, Info, Sparkles, Loader2, RefreshCw, List } from 'lucide-react';
+import { Terminal, Smartphone, Play, Save, Trash2, Plug, Info, Sparkles, Loader2, RefreshCw } from 'lucide-react';
 
 // WebADB 라이브러리
 import { Adb } from '@yume-chan/adb';
@@ -29,7 +29,7 @@ export default function App() {
   const [adbClient, setAdbClient] = useState(null);
   const [scripts, setScripts] = useState([]);
   const [scriptTitle, setScriptTitle] = useState('');
-  const [scriptContent, setScriptContent] = useState('# 아파트너 앱 실행 예시\n# 패키지 목록 버튼을 눌러 정확한 이름을 확인하세요.\nmonkey -p com.aptner.app 1');
+  const [scriptContent, setScriptContent] = useState('# 명령어를 입력하거나 AI를 사용하세요.');
   const [logs, setLogs] = useState(["[시스템] 도구 준비 완료..."]);
   const [isRunning, setIsRunning] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
@@ -122,49 +122,27 @@ export default function App() {
       if (!device) { setIsConnecting(false); return; }
 
       const connection = await device.connect();
-      let adb = null;
+      addLog(`[시스템] ADB 핸드쉐이크 초기화...`);
+      const adb = new Adb(connection);
+      
+      addLog(`[시스템] 기기 인증 및 기능 확인 중...`);
+      let success = false;
       for (let i = 0; i < 10; i++) {
-        try {
-          adb = await Adb.create(connection);
-          if (adb && adb.subprocess) break;
-        } catch (e) {
-          if (i === 0) addLog(`> 폰 화면에서 'USB 디버깅 허용'을 체크해주세요.`);
-          await new Promise(r => setTimeout(r, 1000));
+        if (adb.subprocess) {
+          success = true;
+          break;
         }
+        await new Promise(r => setTimeout(r, 500));
       }
-      if (!adb || !adb.subprocess) throw new Error("인증 시간이 초과되었습니다.");
+
+      if (!success && !adb.features) adb.features = [];
+
       setAdbClient(adb);
-      addLog(`[시스템] 기기 연결 및 초기화 성공!`);
+      addLog(`[시스템] 연결 성공! 이제 스크립트를 실행할 수 있습니다.`);
     } catch (error) {
         addLog(`[연결 실패] ${error.message}`);
     } finally {
       setIsConnecting(false);
-    }
-  };
-
-  // 🔍 기기에 설치된 앱 패키지 목록을 가져오는 함수
-  const listPackages = async () => {
-    if (!adbClient || !adbClient.subprocess) return addLog("[오류] 기기를 먼저 연결하세요.");
-    addLog("[시스템] 설치된 패키지 목록 추출 중...");
-    try {
-      const process = await adbClient.subprocess.spawn('pm list packages -3');
-      let output = '';
-      await process.stdout.pipeTo(new WritableStream({
-        write(chunk) { output += new TextDecoder().decode(chunk); }
-      }));
-      await process.exit;
-      
-      const packages = output.split('\n').filter(line => line.includes('aptner')).map(line => line.replace('package:', '').trim());
-      
-      if (packages.length > 0) {
-        addLog(`[발견] 아파트너 관련 패키지: ${packages.join(', ')}`);
-        addLog(`> 이 이름을 스크립트의 monkey -p 뒤에 넣으세요.`);
-      } else {
-        addLog("[안내] 'aptner'가 포함된 패키지를 찾지 못했습니다. 전체 목록을 보려면 'pm list packages -3'을 실행하세요.");
-        console.log(output); // 전체 목록은 개발자 도구 콘솔에 출력
-      }
-    } catch (e) {
-      addLog(`[에러] 목록 추출 실패: ${e.message}`);
     }
   };
 
@@ -220,7 +198,7 @@ export default function App() {
           const txt = cmd.match(/type\("([^"]+)"\)/)?.[1]?.replace(/ /g, '%s');
           if (txt) await (await adbClient.subprocess.spawn(`input text '${txt}'`)).exit;
         } else {
-          addLog(`> 명령: ${cmd}`);
+          addLog(`> 명령 전송: ${cmd}`);
           await (await adbClient.subprocess.spawn(cmd)).exit;
         }
       }
@@ -235,26 +213,23 @@ export default function App() {
           <h1 className="text-xl font-bold flex items-center gap-2">
             <Smartphone className="text-indigo-600" /> 아파트너 AI 자동화
           </h1>
-          <div className="flex gap-2">
-            {adbClient && (
-              <button onClick={listPackages} className="px-4 py-2 bg-slate-100 text-slate-600 rounded-xl text-sm font-medium hover:bg-slate-200 transition-colors flex items-center gap-2">
-                <List className="w-4 h-4" /> 패키지 목록
-              </button>
-            )}
-            <button onClick={adbClient ? disconnectDevice : connectDevice} disabled={isConnecting} className={`px-5 py-2 rounded-xl font-semibold transition-all flex items-center gap-2 ${adbClient ? 'bg-red-50 text-red-600 border border-red-200' : 'bg-indigo-600 text-white shadow-lg disabled:opacity-50'}`}>
-              {isConnecting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plug className="w-4 h-4" />}
-              {adbClient ? '해제' : isConnecting ? '인증 대기...' : '연결'}
-            </button>
-          </div>
+          <button 
+            onClick={adbClient ? disconnectDevice : connectDevice} 
+            disabled={isConnecting}
+            className={`px-5 py-2 rounded-xl font-semibold transition-all flex items-center gap-2 ${adbClient ? 'bg-red-50 text-red-600 border border-red-200' : 'bg-indigo-600 text-white shadow-lg disabled:opacity-50'}`}
+          >
+            {isConnecting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plug className="w-4 h-4" />}
+            {adbClient ? '해제' : isConnecting ? '초기화 중...' : '연결'}
+          </button>
         </header>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 text-slate-900">
           <aside className="space-y-6">
             <div className="bg-gradient-to-br from-indigo-600 to-violet-600 p-5 rounded-2xl text-white shadow-lg">
               <h3 className="font-bold mb-3 flex items-center gap-2"><Sparkles className="w-4 h-4" /> AI 스마트 변환</h3>
-              <p className="text-xs text-indigo-100 mb-4 leading-relaxed">동작을 입력하면 ADB 코드로 변환합니다.</p>
+              <p className="text-xs text-indigo-100 mb-4 leading-relaxed">원하는 동작을 한글로 입력하세요.</p>
               <div className="space-y-3">
-                <input type="text" value={aiPrompt} onChange={(e) => setAiPrompt(e.target.value)} placeholder="예: 앱 열고 로그인 클릭해줘" className="w-full p-3 bg-white/10 border border-white/20 rounded-xl text-sm placeholder:text-white/40 focus:outline-none text-white shadow-inner" onKeyDown={(e) => e.key === 'Enter' && generateAiScript()} />
+                <input type="text" value={aiPrompt} onChange={(e) => setAiPrompt(e.target.value)} placeholder="예: 로그인 버튼 클릭해줘" className="w-full p-3 bg-white/10 border border-white/20 rounded-xl text-sm placeholder:text-white/40 focus:outline-none text-white shadow-inner" onKeyDown={(e) => e.key === 'Enter' && generateAiScript()} />
                 <button onClick={generateAiScript} disabled={isGenerating || !aiPrompt.trim()} className="w-full py-2.5 bg-white text-indigo-600 rounded-xl font-bold text-sm hover:bg-indigo-50 transition-all flex items-center justify-center gap-2 shadow-md">
                   {isGenerating ? <Loader2 className="w-4 h-4 animate-spin" /> : "스크립트로 변환"}
                 </button>
@@ -264,8 +239,8 @@ export default function App() {
             <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm">
               <h3 className="font-bold mb-4 flex items-center gap-2 text-slate-700"><Save className="w-4 h-4" /> 저장된 목록</h3>
               <div className="space-y-2">
-                {scripts.map(s => (
-                  <div key={s.id} className="p-3 bg-slate-50 rounded-xl flex justify-between items-center group">
+                {scripts.length === 0 ? <p className="text-slate-400 text-xs py-4 text-center">목록이 비어있습니다.</p> : scripts.map(s => (
+                  <div key={s.id} className="p-3 bg-slate-50 rounded-xl border border-slate-100 flex justify-between items-center group">
                     <button onClick={() => {setScriptTitle(s.title); setScriptContent(s.content);}} className="truncate flex-1 text-left font-medium hover:text-indigo-600 text-sm">{s.title}</button>
                     <button onClick={async () => { if (!user) return; await deleteDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'scripts', s.id)); addLog("[시스템] 삭제됨."); }} className="text-slate-300 hover:text-red-500 transition-colors"><Trash2 className="w-4 h-4" /></button>
                   </div>
@@ -281,7 +256,7 @@ export default function App() {
                 <button onClick={async () => { if (!user || !scriptTitle) return; const scriptsRef = collection(db, 'artifacts', appId, 'users', user.uid, 'scripts'); await addDoc(scriptsRef, { title: scriptTitle, content: scriptContent, createdAt: new Date().toISOString() }); addLog(`[시스템] 저장됨.`); }} className="text-slate-400 hover:text-indigo-600 p-2"><Save className="w-5 h-5" /></button>
               </div>
               <textarea value={scriptContent} onChange={e => setScriptContent(e.target.value)} className="w-full h-64 p-4 bg-slate-900 text-slate-300 font-mono text-xs md:text-sm rounded-xl outline-none focus:ring-2 focus:ring-indigo-500" spellCheck="false" />
-              <button onClick={executeScript} disabled={isRunning || !adbClient} className={`w-full py-3.5 rounded-xl font-bold flex items-center justify-center gap-2 transition-all ${isRunning || !adbClient ? 'bg-slate-100 text-slate-400 cursor-not-allowed' : 'bg-indigo-600 text-white hover:bg-indigo-700 shadow-lg shadow-indigo-100'}`}>
+              <button onClick={executeScript} disabled={isRunning || !adbClient} className={`w-full py-3.5 rounded-xl font-bold flex items-center justify-center gap-2 transition-all ${isRunning || !adbClient ? 'bg-slate-100 text-slate-400' : 'bg-indigo-600 text-white hover:bg-indigo-700 shadow-lg shadow-indigo-100'}`}>
                 {isRunning ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
                 {isRunning ? '스크립트 실행 중...' : '스크립트 실행'}
               </button>

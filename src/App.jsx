@@ -22,7 +22,6 @@ const auth = getAuth(app);
 const db = getFirestore(app);
 const appId = typeof __app_id !== 'undefined' ? __app_id : 'aptner-automator';
 
-// Vercel 환경 변수 사용
 const apiKey = import.meta.env.VITE_GEMINI_API_KEY || "";
 
 export default function App() {
@@ -88,7 +87,7 @@ export default function App() {
 2. 앱 실행: monkey -p com.aptner.app 1 
 3. 대기: sleep [초] 
 4. 스마트 명령어: click("글자"), type("텍스트") 활용 
-5. 결과값은 오직 코드만 출력하세요. 설명은 필요 없습니다.`;
+5. 결과값은 오직 코드만 출력하세요. 마크다운 기호(예: \`\`\`bash)는 절대 넣지 마세요.`;
 
     try {
       const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`, {
@@ -106,9 +105,12 @@ export default function App() {
       }
       
       const result = await response.json();
-      const text = result.candidates?.[0]?.content?.parts?.[0]?.text;
+      let text = result.candidates?.[0]?.content?.parts?.[0]?.text;
+      
       if (text) {
-        setScriptContent(text.trim());
+        // AI 응답에서 마크다운 코드 블록 제거 (중요)
+        const cleanedText = text.replace(/```[a-z]*\n?/gi, '').replace(/```/g, '').trim();
+        setScriptContent(cleanedText);
         addLog("[AI] 스크립트 생성이 완료되었습니다.");
         setAiPrompt("");
       }
@@ -133,24 +135,22 @@ export default function App() {
       addLog(`[시스템] ${device.name} 연결 시도...`);
       const connection = await device.connect();
       
-      // 0.0.22 버전 에러 해결: create 대신 생성자 사용
-      addLog(`[시스템] ADB 객체 생성 중...`);
-      const adb = new Adb(connection);
-      
-      // 'features' 관련 에러 방지를 위해 객체가 유효한지 최소한의 검증 시도
-      if (!adb) {
-        throw new Error("ADB 객체 생성에 실패했습니다.");
+      addLog(`[시스템] ADB 인증 및 동기화 중...`);
+      // 0.0.22 버전에서 create가 안될 경우 수동 초기화 시도
+      let adb;
+      try {
+        adb = await Adb.create(connection);
+      } catch (e) {
+        addLog(`[안내] Adb.create 실패, 직접 생성 방식을 사용합니다.`);
+        adb = new Adb(connection);
       }
+      
+      if (!adb) throw new Error("ADB 객체 생성에 실패했습니다.");
 
       setAdbClient(adb);
       addLog(`[시스템] 기기 연결 성공!`);
-      addLog(`> 폰 화면에 'USB 디버깅 허용' 팝업이 뜨면 '확인'을 눌러주세요.`);
     } catch (error) {
-      if (error.message.includes('claimInterface')) {
-        addLog(`[연결 실패] 다른 프로그램이 폰을 사용 중입니다. 탭을 닫고 다시 시도하세요.`);
-      } else {
         addLog(`[연결 실패] ${error.message}`);
-      }
     }
   };
 
@@ -194,15 +194,19 @@ export default function App() {
     setIsRunning(true);
     addLog("=================================");
     
-    const lines = scriptContent.split('\n');
+    // 스크립트 내용 정제 (마크다운 기호가 남아있을 경우 대비)
+    const sanitizedContent = scriptContent.replace(/```[a-z]*\n?/gi, '').replace(/```/g, '').trim();
+    const lines = sanitizedContent.split('\n');
+    
     try {
       for (const line of lines) {
         const cmd = line.trim();
         if (!cmd || cmd.startsWith('#')) continue;
 
-        // 실행 전 subprocess 유효성 체크 (초기화 지연 대비)
+        // features가 없는 경우를 대비한 방어 로직
         if (!adbClient.subprocess) {
-          throw new Error("ADB 기능이 아직 준비되지 않았습니다. 잠시 후 다시 시도하거나 재연결하세요.");
+            addLog("[오류] ADB 기능이 아직 활성화되지 않았습니다. 잠시 후 다시 시도하세요.");
+            break;
         }
 
         if (cmd.startsWith('sleep ')) {
@@ -210,16 +214,20 @@ export default function App() {
           addLog(`> ${s}초 대기...`);
           await new Promise(r => setTimeout(r, s * 1000));
         } else if (cmd.startsWith('click("')) {
-          const target = cmd.match(/click\("([^"]+)"\)/)[1];
-          const pos = await findTextBounds(target);
-          if (pos) {
-            const proc = await adbClient.subprocess.spawn(`input tap ${pos.x} ${pos.y}`);
-            await proc.exit;
+          const target = cmd.match(/click\("([^"]+)"\)/)?.[1];
+          if (target) {
+            const pos = await findTextBounds(target);
+            if (pos) {
+              const proc = await adbClient.subprocess.spawn(`input tap ${pos.x} ${pos.y}`);
+              await proc.exit;
+            }
           }
         } else if (cmd.startsWith('type("')) {
-          const txt = cmd.match(/type\("([^"]+)"\)/)[1].replace(/ /g, '%s');
-          const proc = await adbClient.subprocess.spawn(`input text '${txt}'`);
-          await proc.exit;
+          const txt = cmd.match(/type\("([^"]+)"\)/)?.[1]?.replace(/ /g, '%s');
+          if (txt) {
+            const proc = await adbClient.subprocess.spawn(`input text '${txt}'`);
+            await proc.exit;
+          }
         } else {
           addLog(`> shell: ${cmd}`);
           const proc = await adbClient.subprocess.spawn(cmd);
@@ -290,7 +298,7 @@ export default function App() {
             <section className="bg-[#1e1e1e] p-5 rounded-2xl border border-slate-800 shadow-inner">
               <div className="flex items-center gap-2 mb-3"><Terminal className="w-4 h-4 text-emerald-400" /><span className="text-emerald-400 text-xs font-bold uppercase tracking-wider">Log</span></div>
               <div className="h-40 overflow-y-auto font-mono text-xs text-slate-400 space-y-1 custom-scrollbar">
-                {logs.map((log, i) => <div key={i} className={log?.includes('✅') || log?.includes('성공') ? 'text-emerald-400' : log?.includes('오류') || log?.includes('실패') ? 'text-red-400' : ''}>{log}</div>)}
+                {logs.map((log, i) => <div key={i} className={log?.includes('✅') || log?.includes('성공') ? 'text-emerald-400' : log?.includes('오류') || log?.includes('실패') || log?.includes('중단') ? 'text-red-400' : ''}>{log}</div>)}
                 <div ref={logsEndRef} />
               </div>
             </section>

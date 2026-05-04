@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { initializeApp } from "firebase/app";
 import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "firebase/auth";
 import { getFirestore, collection, addDoc, onSnapshot, deleteDoc, doc } from "firebase/firestore";
-import { Terminal, Smartphone, Play, Save, Trash2, Plug, Info, Sparkles, Loader2, Search } from 'lucide-react';
+import { Terminal, Smartphone, Play, Save, Trash2, Plug, Info, Sparkles, Loader2 } from 'lucide-react';
 
 // WebADB 라이브러리
 import { Adb } from '@yume-chan/adb';
@@ -88,11 +88,11 @@ export default function App() {
 2. 앱 실행: monkey -p com.aptner.app 1 
 3. 대기: sleep [초] 
 4. 스마트 명령어: click("글자"), type("텍스트") 활용 
-5. 코드만 출력할 것.`;
+5. 결과값은 오직 코드만 출력하세요. 설명은 필요 없습니다.`;
 
     try {
-      // 확인된 모델명 gemini-2.0-flash 적용
-      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`, {
+      // 확인된 최신 모델명 gemini-2.5-flash 적용
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -240,7 +240,7 @@ export default function App() {
                 {scripts.map(s => (
                   <div key={s.id} className="p-3 bg-slate-50 rounded-xl flex justify-between items-center group border border-transparent hover:border-indigo-100 transition-all">
                     <button onClick={() => {setScriptTitle(s.title); setScriptContent(s.content);}} className="truncate flex-1 text-left font-medium hover:text-indigo-600">{s.title}</button>
-                    <button onClick={async () => { if (!user) return; await deleteDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'scripts', s.id)); addLog("[시스템] 삭제 완료."); }} className="text-slate-300 hover:text-red-500"><Trash2 className="w-4 h-4" /></button>
+                    <button onClick={async () => { if (!user) return; await deleteDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'scripts', s.id)); addLog("[시스템] 삭제 완료."); }} className="text-slate-300 hover:text-red-500 transition-colors"><Trash2 className="w-4 h-4" /></button>
                   </div>
                 ))}
               </div>

@@ -4,11 +4,6 @@ import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged }
 import { getFirestore, collection, addDoc, onSnapshot, deleteDoc, doc } from "firebase/firestore";
 import { Terminal, Smartphone, Play, Save, Trash2, Plug, Info, Sparkles, Loader2, RefreshCw, List } from 'lucide-react';
 
-// WebADB 최신 라이브러리 (정적 임포트 사용)
-import { Adb, AdbDaemonTransport } from '@yume-chan/adb';
-import { AdbDaemonWebUsbDeviceManager } from '@yume-chan/adb-daemon-webusb';
-import { AdbWebCredentialStore } from '@yume-chan/adb-credential-web';
-
 const firebaseConfig = {
   apiKey: "AIzaSyCeLR6Mfh1ClXA2YzLYaleF8BolJG31CIA",
   authDomain: "automatics-16a4b.firebaseapp.com",
@@ -22,8 +17,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const appId = typeof window !== 'undefined' && window.__app_id ? window.__app_id : 'aptner-automator';
-const apiKey = typeof import.meta !== 'undefined' && import.meta.env ? import.meta.env.VITE_GEMINI_API_KEY : "";
+const appId = "aptner-automator";
 
 export default function App() {
   const [user, setUser] = useState(null);
@@ -38,11 +32,26 @@ export default function App() {
   const [isGenerating, setIsGenerating] = useState(false);
   const logsEndRef = useRef(null);
 
+  // Vercel(Vite) 빌드 에러 우회 처리
+  const [apiKey, setApiKey] = useState("");
+
+  useEffect(() => {
+    // 클라이언트 사이드에서만 안전하게 환경변수 접근
+    try {
+      if (typeof import.meta !== 'undefined' && import.meta.env) {
+        setApiKey(import.meta.env.VITE_GEMINI_API_KEY || "");
+      }
+    } catch (e) {}
+  }, []);
+
   useEffect(() => {
     const initAuth = async () => {
       try {
-        if (typeof window !== 'undefined' && window.__initial_auth_token) {
-          await signInWithCustomToken(auth, window.__initial_auth_token);
+        let token = null;
+        try { token = window.__initial_auth_token; } catch (e) {}
+        
+        if (token) {
+          await signInWithCustomToken(auth, token);
         } else {
           await signInAnonymously(auth);
         }
@@ -84,7 +93,7 @@ export default function App() {
     addLog(`[AI] 명령 해석 중...`);
 
     const systemPrompt = `당신은 안드로이드 ADB 전문가입니다. 사용자의 한글 요청을 ADB 스크립트로 변환하세요.
-규칙: 1. 주석은 #으로 시작 2. 앱 실행: monkey -p com.aptner.app 1 3. 대기: sleep [초] 4. 스마트 명령어: click("글자"), type("텍스트") 활용 5. 결과값은 오직 코드만 출력하세요. 마크다운 기호를 절대로 포함하지 마세요.`;
+규칙: 1. 주석은 #으로 시작 2. 앱 실행: monkey -p com.aptner.app 1 3. 대기: sleep [초] 4. 스마트 명령어: click("글자"), type("텍스트") 활용 5. 결과값은 오직 코드만 출력하세요. 마크다운을 절대 포함하지 마세요.`;
 
     try {
       const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`, {
@@ -98,8 +107,9 @@ export default function App() {
       const result = await response.json();
       let text = result.candidates?.[0]?.content?.parts?.[0]?.text;
       if (text) {
+        const bt3 = String.fromCharCode(96, 96, 96);
         const lines = text.split('\n');
-        const cleanedLines = lines.filter(line => !line.includes('```'));
+        const cleanedLines = lines.filter(line => line.indexOf(bt3) === -1);
         const cleanedText = cleanedLines.join('\n').trim();
         
         setScriptContent(cleanedText);
@@ -122,6 +132,12 @@ export default function App() {
         setAdbClient(null);
       }
       
+      // 빌드 오류(Could not resolve)를 막기 위해 클라이언트 실행 시점에만 동적 로드
+      addLog(`[시스템] WebADB 모듈 로드 중...`);
+      const { Adb, AdbDaemonTransport } = await import('@yume-chan/adb');
+      const { AdbDaemonWebUsbDeviceManager } = await import('@yume-chan/adb-daemon-webusb');
+      const { AdbWebCredentialStore } = await import('@yume-chan/adb-credential-web');
+
       const manager = AdbDaemonWebUsbDeviceManager.BROWSER;
       if (!manager) {
           throw new Error("WebUSB를 지원하지 않는 브라우저입니다.");
@@ -136,21 +152,15 @@ export default function App() {
       addLog(`[시스템] ${device.name} 연결 중...`);
       const connection = await device.connect();
       
-      addLog(`[시스템] 보안 인증 설정 중 (필요시 기기에서 '허용'을 눌러주세요)...`);
+      addLog(`[시스템] 보안 인증 설정 중 (폰 화면의 '항상 허용' 체크 요망)...`);
       
-      // 최신 라이브러리의 정석적인 인증 절차 적용
-      // 브라우저의 IndexedDB에 RSA 키를 저장하고 관리하는 스토어 생성
       const credentialStore = new AdbWebCredentialStore();
-      
-      // 전송 계층 생성 및 인증 핸드쉐이크 수행
       const transport = await AdbDaemonTransport.authenticate({
         serial: device.serial,
         connection,
         credentialStore
       });
 
-      // 인증이 완료된 transport를 기반으로 최종 ADB 인스턴스 생성
-      // 이 과정을 거쳐야만 기기의 기능을 확인하는 features 배열이 정상적으로 로드됨
       const adb = new Adb(transport);
 
       if (!adb || !adb.subprocess) {
@@ -183,15 +193,12 @@ export default function App() {
     
     addLog("[시스템] 설치된 패키지 목록 추출 중...");
     try {
-      // 이제 정상적인 transport 기반이므로 spawn 명령이 정상 작동합니다.
       const process = await adbClient.subprocess.spawn('pm list packages -3');
       let output = '';
       
-      // stdout 스트림 읽기
       for await (const chunk of process.stdout) {
           output += new TextDecoder().decode(chunk);
       }
-      
       await process.exit;
 
       const packages = output.split('\n').filter(line => line.includes('aptner')).map(line => line.replace('package:', '').trim());
@@ -200,7 +207,7 @@ export default function App() {
         addLog(`[발견] 아파트너 관련 패키지: ${packages.join(', ')}`);
         addLog(`> 이 이름을 스크립트의 monkey -p 뒤에 넣으세요.`);
       } else {
-        addLog("[안내] 'aptner'가 포함된 패키지를 찾지 못했습니다. 전체 목록을 보려면 'pm list packages -3'을 실행하세요.");
+        addLog("[안내] 'aptner'가 포함된 패키지를 찾지 못했습니다.");
         console.log(output);
       }
     } catch (e) {
@@ -212,7 +219,7 @@ export default function App() {
     if (!adbClient || !adbClient.subprocess) return null;
     try {
       const dump = await adbClient.subprocess.spawn('uiautomator dump /sdcard/view.xml');
-      for await (const chunk of dump.stdout) {} // 스트림 소진
+      for await (const chunk of dump.stdout) {} 
       await dump.exit;
       
       const cat = await adbClient.subprocess.spawn('cat /sdcard/view.xml');
@@ -240,8 +247,9 @@ export default function App() {
     setIsRunning(true);
     addLog("=================================");
     
+    const bt3 = String.fromCharCode(96, 96, 96);
     const scriptLines = scriptContent.split('\n');
-    const sanitizedLines = scriptLines.filter(line => !line.includes('```'));
+    const sanitizedLines = scriptLines.filter(line => line.indexOf(bt3) === -1);
     const lines = sanitizedLines.join('\n').split('\n');
     
     try {
@@ -271,7 +279,7 @@ export default function App() {
           await proc.exit;
         }
       }
-      addLog("✅ 스크립트 실행 완료.");
+      addLog("✅ 스크립 실행 완료.");
     } catch (e) { addLog(`[중단] ${e.message}`); } finally { setIsRunning(false); addLog("================================="); }
   };
 

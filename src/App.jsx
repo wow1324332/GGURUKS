@@ -22,8 +22,9 @@ const auth = getAuth(app);
 const db = getFirestore(app);
 const appId = typeof __app_id !== 'undefined' ? __app_id : 'aptner-automator';
 
-// AI API Key: 실행 환경에서 자동 주입됩니다. 직접 입력하지 마세요.
-const apiKey = "";
+// AI API Key: Vercel 환경 변수를 사용하도록 수정되었습니다.
+// 배포 시 Vercel 대시보드에서 VITE_GEMINI_API_KEY를 추가하세요.
+const apiKey = import.meta.env.VITE_GEMINI_API_KEY || "";
 
 export default function App() {
   const [user, setUser] = useState(null);
@@ -215,7 +216,7 @@ export default function App() {
           }
         } else if (cmd.startsWith('type("')) {
           const txt = cmd.match(/type\("([^"]+)"\)/)[1].replace(/ /g, '%s');
-          await (await adbClient.subprocess.spawn(`input text '${txt}'`)).exit;
+          await (await adbClient.subprocess.spawn(`input text '${txt}'`);).exit;
         } else {
           addLog(`> shell: ${cmd}`);
           await (await adbClient.subprocess.spawn(cmd)).exit;

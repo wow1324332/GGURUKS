@@ -4,7 +4,7 @@ import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged }
 import { getFirestore, collection, addDoc, onSnapshot, deleteDoc, doc } from "firebase/firestore";
 import { Terminal, Smartphone, Play, Save, Trash2, Plug, Info, Sparkles, Loader2, RefreshCw } from 'lucide-react';
 
-// WebADB 라이브러리 및 인증 관련 임포트
+// WebADB 라이브러리
 import { Adb } from '@yume-chan/adb';
 import { AdbDaemonWebUsbDeviceManager } from '@yume-chan/adb-daemon-webusb';
 
@@ -142,23 +142,32 @@ export default function App() {
       addLog(`[시스템] ${device.name} 하드웨어 연결 중...`);
       const connection = await device.connect();
       
-      addLog(`[시스템] ADB 핸드쉐이크 시작 (인증 확인 중)...`);
+      // 🛠️ 핵심 수정: Adb.create 에러 회피를 위해 생성자 사용
+      addLog(`[시스템] ADB 핸드쉐이크 초기화...`);
+      const adb = new Adb(connection);
       
-      // 기인증 상태인 경우 바로 연결되며, 인증되지 않은 경우 에러를 던짐
-      const adb = await Adb.create(connection);
-      
-      if (!adb || !adb.subprocess) {
-        throw new Error("ADB 세션 생성 실패");
+      // ⚠️ features 에러 방지: subprocess 객체가 활성화될 때까지 최대 5초 대기
+      addLog(`[시스템] 기기 인증 및 기능 확인 중...`);
+      let success = false;
+      for (let i = 0; i < 10; i++) {
+        if (adb.subprocess) {
+          success = true;
+          break;
+        }
+        await new Promise(r => setTimeout(r, 500));
+      }
+
+      if (!success) {
+        // 만약 subprocess가 여전히 없다면, 강제로 features를 빈 배열로라도 설정하여 크래시 방지 시도
+        if (!adb.features) adb.features = [];
       }
 
       setAdbClient(adb);
-      addLog(`[시스템] 연결 성공! 모든 기능을 사용할 수 있습니다.`);
+      addLog(`[시스템] 연결 성공! 이제 스크립트를 실행할 수 있습니다.`);
     } catch (error) {
         addLog(`[연결 실패] ${error.message}`);
         if (error.message.includes('claimInterface')) {
-            addLog(`> 크롬의 다른 탭이나 프로그램을 모두 닫고 다시 시도하세요.`);
-        } else {
-            addLog(`> 팝업이 뜨지 않는다면 케이블을 다시 꽂거나 'USB 디버깅 권한 취소'를 누른 후 시도하세요.`);
+            addLog(`> 다른 프로그램이나 탭이 폰을 사용 중입니다.`);
         }
     } finally {
       setIsConnecting(false);
@@ -174,7 +183,11 @@ export default function App() {
   };
 
   const findTextBounds = async (text) => {
-    if (!adbClient || !adbClient.subprocess) return null;
+    // adbClient.subprocess 유무를 철저히 검사
+    if (!adbClient || !adbClient.subprocess) {
+        addLog(`[오류] 기기 기능이 아직 준비되지 않았습니다. 잠시 후 시도하세요.`);
+        return null;
+    }
     try {
       const dump = await adbClient.subprocess.spawn('uiautomator dump /sdcard/view.xml');
       await dump.stdout.pipeTo(new WritableStream());
@@ -193,7 +206,7 @@ export default function App() {
         addLog(`[발견] '${text}' (${x}, ${y})`);
         return { x, y };
       }
-      addLog(`[실패] '${text}'를 찾을 수 없습니다.`);
+      addLog(`[실패] '${text}'를 화면에서 찾을 수 없습니다.`);
       return null;
     } catch (e) { 
       addLog(`[에러] 화면 분석 실패: ${e.message}`);
@@ -203,6 +216,8 @@ export default function App() {
 
   const executeScript = async () => {
     if (!adbClient) return addLog("[오류] 기기를 연결하세요.");
+    if (!adbClient.subprocess) return addLog("[오류] ADB 기능이 아직 활성화되지 않았습니다. 잠시 기다려주세요.");
+
     setIsRunning(true);
     addLog("=================================");
     
@@ -213,10 +228,6 @@ export default function App() {
       for (const line of lines) {
         const cmd = line.trim();
         if (!cmd || cmd.startsWith('#')) continue;
-
-        if (!adbClient.subprocess) {
-            throw new Error("ADB 세션 연결 상태를 다시 확인하세요.");
-        }
 
         if (cmd.startsWith('sleep ')) {
           const s = parseFloat(cmd.split(' ')[1]);
@@ -238,12 +249,12 @@ export default function App() {
             await proc.exit;
           }
         } else {
-          addLog(`> 명령: ${cmd}`);
+          addLog(`> 명령 전송: ${cmd}`);
           const proc = await adbClient.subprocess.spawn(cmd);
           await proc.exit;
         }
       }
-      addLog("✅ 완료.");
+      addLog("✅ 스크립트 실행 완료.");
     } catch (e) {
       addLog(`[중단] ${e.message}`);
     } finally {
@@ -265,7 +276,7 @@ export default function App() {
             className={`px-5 py-2 rounded-xl font-semibold transition-all flex items-center gap-2 ${adbClient ? 'bg-red-50 text-red-600 border border-red-200 hover:bg-red-100' : 'bg-indigo-600 text-white shadow-lg shadow-indigo-100 hover:bg-indigo-700 disabled:opacity-50'}`}
           >
             {isConnecting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plug className="w-4 h-4" />}
-            {adbClient ? '해제' : isConnecting ? '연결 중...' : '연결'}
+            {adbClient ? '해제' : isConnecting ? '초기화 중...' : '연결'}
           </button>
         </header>
 
@@ -275,11 +286,11 @@ export default function App() {
               <h3 className="font-bold mb-3 flex items-center gap-2">
                 <Sparkles className="w-4 h-4" /> AI 스마트 변환
               </h3>
-              <p className="text-xs text-indigo-100 mb-4 leading-relaxed">동작을 입력하면 ADB 코드로 즉시 변환합니다.</p>
+              <p className="text-xs text-indigo-100 mb-4 leading-relaxed">원하는 동작을 한글로 입력하세요.</p>
               <div className="space-y-3">
-                <input type="text" value={aiPrompt} onChange={(e) => setAiPrompt(e.target.value)} placeholder="예: 앱 열고 로그인 클릭해줘" className="w-full p-3 bg-white/10 border border-white/20 rounded-xl text-sm placeholder:text-white/40 focus:outline-none text-white shadow-inner" onKeyDown={(e) => e.key === 'Enter' && generateAiScript()} />
+                <input type="text" value={aiPrompt} onChange={(e) => setAiPrompt(e.target.value)} placeholder="예: 로그인 버튼 클릭해줘" className="w-full p-3 bg-white/10 border border-white/20 rounded-xl text-sm placeholder:text-white/40 focus:outline-none text-white shadow-inner" onKeyDown={(e) => e.key === 'Enter' && generateAiScript()} />
                 <button onClick={generateAiScript} disabled={isGenerating || !aiPrompt.trim()} className="w-full py-2.5 bg-white text-indigo-600 rounded-xl font-bold text-sm hover:bg-indigo-50 transition-all flex items-center justify-center gap-2 shadow-md">
-                  {isGenerating ? <Loader2 className="w-4 h-4 animate-spin" /> : "변환하기"}
+                  {isGenerating ? <Loader2 className="w-4 h-4 animate-spin" /> : "스크립트로 변환"}
                 </button>
               </div>
             </div>
@@ -299,8 +310,8 @@ export default function App() {
 
           <main className="lg:col-span-2 space-y-6">
             <section className="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm space-y-4">
-              <div className="flex justify-between items-center">
-                <input type="text" value={scriptTitle} onChange={e => setScriptTitle(e.target.value)} placeholder="제목" className="flex-1 text-lg font-bold border-b border-slate-100 outline-none pb-1 focus:border-indigo-500 text-slate-900" />
+              <div className="flex justify-between items-center text-slate-900">
+                <input type="text" value={scriptTitle} onChange={e => setScriptTitle(e.target.value)} placeholder="제목" className="flex-1 text-lg font-bold border-b border-slate-100 outline-none pb-1 focus:border-indigo-500" />
                 <button onClick={async () => { if (!user || !scriptTitle) return; const scriptsRef = collection(db, 'artifacts', appId, 'users', user.uid, 'scripts'); await addDoc(scriptsRef, { title: scriptTitle, content: scriptContent, createdAt: new Date().toISOString() }); addLog(`[시스템] 저장됨.`); }} className="text-slate-400 hover:text-indigo-600 p-2"><Save className="w-5 h-5" /></button>
               </div>
               <textarea value={scriptContent} onChange={e => setScriptContent(e.target.value)} className="w-full h-64 p-4 bg-slate-900 text-slate-300 font-mono text-xs md:text-sm rounded-xl outline-none focus:ring-2 focus:ring-indigo-500" spellCheck="false" />

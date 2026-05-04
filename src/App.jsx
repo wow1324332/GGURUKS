@@ -92,7 +92,6 @@ export default function App() {
 4. 스마트 명령어 click("[글자]")와 type("[텍스트]")를 적극적으로 활용하세요.
 5. 결과값은 오직 코드만 출력하세요. 설명은 필요 없습니다.`;
 
-    // 지수 백오프를 포함한 호출 로직
     const callGeminiWithRetry = async (prompt, retries = 5) => {
       const delays = [1000, 2000, 4000, 8000, 16000];
       
@@ -215,8 +214,11 @@ export default function App() {
             await (await adbClient.subprocess.spawn(`input tap ${pos.x} ${pos.y}`)).exit;
           }
         } else if (cmd.startsWith('type("')) {
-          const txt = cmd.match(/type\("([^"]+)"\)/)[1].replace(/ /g, '%s');
-          await (await adbClient.subprocess.spawn(`input text '${txt}'`);).exit;
+          const txtMatch = cmd.match(/type\("([^"]+)"\)/);
+          if (txtMatch) {
+            const txt = txtMatch[1].replace(/ /g, '%s');
+            await (await adbClient.subprocess.spawn(`input text '${txt}'`)).exit;
+          }
         } else {
           addLog(`> shell: ${cmd}`);
           await (await adbClient.subprocess.spawn(cmd)).exit;

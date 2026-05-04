@@ -123,20 +123,9 @@ export default function App() {
 
       const connection = await device.connect();
       addLog(`[시스템] ADB 핸드쉐이크 초기화...`);
-      const adb = new Adb(connection);
       
-      addLog(`[시스템] 기기 인증 및 기능 확인 중...`);
-      let success = false;
-      for (let i = 0; i < 10; i++) {
-        if (adb.subprocess) {
-          success = true;
-          break;
-        }
-        await new Promise(r => setTimeout(r, 500));
-      }
-
-      // 연결 시 항상 features 초기화를 보장하여 에러 차단
-      if (!adb.features) adb.features = [];
+      // 최신 버전에 맞춰 인증 핸드쉐이크를 정상적으로 수행 (features 오류 원천 해결)
+      const adb = await Adb.create(connection);
 
       setAdbClient(adb);
       addLog(`[시스템] 연결 성공! 이제 스크립트를 실행할 수 있습니다.`);
@@ -157,8 +146,6 @@ export default function App() {
 
   const listPackages = async () => {
     if (!adbClient || !adbClient.subprocess) return addLog("[오류] 기기를 연결하세요.");
-    // ⚠️ features 런타임 오류 완벽 차단 방어 코드
-    if (!adbClient.features) adbClient.features = [];
     
     addLog("[시스템] 설치된 패키지 목록 추출 중...");
     try {
@@ -185,8 +172,6 @@ export default function App() {
 
   const findTextBounds = async (text) => {
     if (!adbClient || !adbClient.subprocess) return null;
-    // ⚠️ features 런타임 오류 방어 코드
-    if (!adbClient.features) adbClient.features = [];
     try {
       const dump = await adbClient.subprocess.spawn('uiautomator dump /sdcard/view.xml');
       await dump.stdout.pipeTo(new WritableStream());
@@ -209,8 +194,6 @@ export default function App() {
 
   const executeScript = async () => {
     if (!adbClient || !adbClient.subprocess) return addLog("[오류] 기기를 연결하세요.");
-    // ⚠️ features 런타임 오류 방어 코드
-    if (!adbClient.features) adbClient.features = [];
     
     setIsRunning(true);
     addLog("=================================");

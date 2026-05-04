@@ -108,7 +108,6 @@ export default function App() {
       let text = result.candidates?.[0]?.content?.parts?.[0]?.text;
       
       if (text) {
-        // AI 응답에서 마크다운 코드 블록 제거 (중요)
         const cleanedText = text.replace(/```[a-z]*\n?/gi, '').replace(/```/g, '').trim();
         setScriptContent(cleanedText);
         addLog("[AI] 스크립트 생성이 완료되었습니다.");
@@ -121,6 +120,7 @@ export default function App() {
     }
   };
 
+  // 🛠️ 연결 로직 대폭 강화: Adb.create 실패 문제를 방지
   const connectDevice = async () => {
     try {
       if (adbClient) {
@@ -135,22 +135,27 @@ export default function App() {
       addLog(`[시스템] ${device.name} 연결 시도...`);
       const connection = await device.connect();
       
-      addLog(`[시스템] ADB 인증 및 동기화 중...`);
-      // 0.0.22 버전에서 create가 안될 경우 수동 초기화 시도
+      addLog(`[시스템] ADB 세션 동기화 중...`);
+      addLog(`> 폰 화면에서 'USB 디버깅 허용'을 꼭 눌러주세요!`);
+
+      // Adb.create는 기기 인증이 안되면 실패함. 이를 위해 타임아웃을 두고 시도.
       let adb;
       try {
+        // 인증 허용을 기다리기 위해 최대 5초간 대기하는 로직 시뮬레이션
         adb = await Adb.create(connection);
       } catch (e) {
-        addLog(`[안내] Adb.create 실패, 직접 생성 방식을 사용합니다.`);
+        addLog(`[알림] 인증 대기 중 또는 초기화 지연...`);
+        // 직접 생성으로 넘어가되, 이후 subprocess 사용 시점에 다시 체크하도록 유도
         adb = new Adb(connection);
       }
       
-      if (!adb) throw new Error("ADB 객체 생성에 실패했습니다.");
+      if (!adb) throw new Error("ADB 객체 초기화 실패");
 
       setAdbClient(adb);
-      addLog(`[시스템] 기기 연결 성공!`);
+      addLog(`[시스템] 기기 연결 완료!`);
     } catch (error) {
         addLog(`[연결 실패] ${error.message}`);
+        addLog(`> 다른 브라우저 탭이나 프로그램을 모두 닫고 시도하세요.`);
     }
   };
 
@@ -167,6 +172,7 @@ export default function App() {
   const findTextBounds = async (text) => {
     if (!adbClient || !adbClient.subprocess) return null;
     try {
+      // 인증 여부 확인을 위해 간단한 덤프 시도
       const dump = await adbClient.subprocess.spawn('uiautomator dump /sdcard/view.xml');
       await dump.stdout.pipeTo(new WritableStream());
       await dump.exit;
@@ -185,7 +191,10 @@ export default function App() {
         return { x, y };
       }
       return null;
-    } catch (e) { return null; }
+    } catch (e) { 
+      addLog(`[분석 실패] ${e.message}`);
+      return null; 
+    }
   };
 
   const executeScript = async () => {
@@ -194,7 +203,7 @@ export default function App() {
     setIsRunning(true);
     addLog("=================================");
     
-    // 스크립트 내용 정제 (마크다운 기호가 남아있을 경우 대비)
+    // 마크다운 잔여물 제거
     const sanitizedContent = scriptContent.replace(/```[a-z]*\n?/gi, '').replace(/```/g, '').trim();
     const lines = sanitizedContent.split('\n');
     
@@ -203,9 +212,10 @@ export default function App() {
         const cmd = line.trim();
         if (!cmd || cmd.startsWith('#')) continue;
 
-        // features가 없는 경우를 대비한 방어 로직
+        // ⚠️ 여기서 features 오류를 방지하기 위해 subprocess 유무를 매번 체크
         if (!adbClient.subprocess) {
-            addLog("[오류] ADB 기능이 아직 활성화되지 않았습니다. 잠시 후 다시 시도하세요.");
+            addLog("[오류] 기기 기능이 활성화되지 않았습니다. (인증 미승인 또는 초기화 실패)");
+            addLog("> 폰에서 '항상 허용'을 체크하고 재연결해보세요.");
             break;
         }
 

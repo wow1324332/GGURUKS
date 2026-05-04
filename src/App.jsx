@@ -122,10 +122,32 @@ export default function App() {
       if (!device) { setIsConnecting(false); return; }
 
       const connection = await device.connect();
-      addLog(`[시스템] ADB 핸드쉐이크 초기화...`);
+      addLog(`[시스템] ADB 핸드쉐이크 초기화 (최신 API 호환 모드)...`);
       
-      // 최신 버전에 맞춰 인증 핸드쉐이크를 정상적으로 수행 (features 오류 원천 해결)
-      const adb = await Adb.create(connection);
+      let adb;
+      // 구버전 및 최신버전 라이브러리 API 완벽 대응 로직
+      if (typeof Adb.create === 'function') {
+        adb = await Adb.create(connection);
+      } else {
+        addLog(`[시스템] 보안 인증 스토어 로드 중...`);
+        // 최신 버전(create 미지원)일 경우 인증 스토어를 동적 로드하여 핸드쉐이크를 정상 완료시킴
+        const yumeAdb = await import('[https://esm.sh/@yume-chan/adb@0.0.22](https://esm.sh/@yume-chan/adb@0.0.22)');
+        const CredModule = await import('[https://esm.sh/@yume-chan/adb-credential-web@0.0.22](https://esm.sh/@yume-chan/adb-credential-web@0.0.22)');
+        const AdbWebCredentialStore = CredModule.default || CredModule.AdbWebCredentialStore;
+        const credentialStore = new AdbWebCredentialStore();
+
+        addLog(`[시스템] 기기 권한 확인 중 (필요시 폰에서 '허용'을 눌러주세요)...`);
+        const transport = await yumeAdb.AdbDaemonTransport.authenticate({
+          serial: device.serial,
+          connection,
+          credentialStore
+        });
+        adb = new yumeAdb.Adb(transport);
+      }
+
+      if (!adb || !adb.subprocess) {
+        throw new Error("ADB 세션 초기화 실패");
+      }
 
       setAdbClient(adb);
       addLog(`[시스템] 연결 성공! 이제 스크립트를 실행할 수 있습니다.`);

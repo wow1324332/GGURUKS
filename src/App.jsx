@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { initializeApp } from "firebase/app";
 import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "firebase/auth";
 import { getFirestore, collection, addDoc, onSnapshot, deleteDoc, doc } from "firebase/firestore";
-import { Terminal, Smartphone, Play, Save, Trash2, Plug, Info, Sparkles, Loader2, RefreshCw } from 'lucide-react';
+import { Terminal, Smartphone, Play, Save, Trash2, Plug, Info, Sparkles, Loader2, RefreshCw, List } from 'lucide-react';
 
 // WebADB 라이브러리
 import { Adb } from '@yume-chan/adb';
@@ -154,6 +154,31 @@ export default function App() {
     }
   };
 
+  const listPackages = async () => {
+    if (!adbClient || !adbClient.subprocess) return addLog("[오류] 기기를 연결하세요.");
+    addLog("[시스템] 설치된 패키지 목록 추출 중...");
+    try {
+      const process = await adbClient.subprocess.spawn('pm list packages -3');
+      let output = '';
+      await process.stdout.pipeTo(new WritableStream({
+        write(chunk) { output += new TextDecoder().decode(chunk); }
+      }));
+      await process.exit;
+
+      const packages = output.split('\n').filter(line => line.includes('aptner')).map(line => line.replace('package:', '').trim());
+
+      if (packages.length > 0) {
+        addLog(`[발견] 아파트너 관련 패키지: ${packages.join(', ')}`);
+        addLog(`> 이 이름을 스크립트의 monkey -p 뒤에 넣으세요.`);
+      } else {
+        addLog("[안내] 'aptner'가 포함된 패키지를 찾지 못했습니다. 전체 목록을 보려면 'pm list packages -3'을 실행하세요.");
+        console.log(output);
+      }
+    } catch (e) {
+      addLog(`[에러] 목록 추출 실패: ${e.message}`);
+    }
+  };
+
   const findTextBounds = async (text) => {
     if (!adbClient || !adbClient.subprocess) return null;
     try {
@@ -213,14 +238,21 @@ export default function App() {
           <h1 className="text-xl font-bold flex items-center gap-2">
             <Smartphone className="text-indigo-600" /> 아파트너 AI 자동화
           </h1>
-          <button 
-            onClick={adbClient ? disconnectDevice : connectDevice} 
-            disabled={isConnecting}
-            className={`px-5 py-2 rounded-xl font-semibold transition-all flex items-center gap-2 ${adbClient ? 'bg-red-50 text-red-600 border border-red-200' : 'bg-indigo-600 text-white shadow-lg disabled:opacity-50'}`}
-          >
-            {isConnecting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plug className="w-4 h-4" />}
-            {adbClient ? '해제' : isConnecting ? '초기화 중...' : '연결'}
-          </button>
+          <div className="flex items-center gap-2">
+            {adbClient && (
+              <button onClick={listPackages} className="px-4 py-2 bg-slate-100 text-slate-600 rounded-xl text-sm font-medium hover:bg-slate-200 transition-colors flex items-center gap-2">
+                <List className="w-4 h-4" /> 패키지 목록
+              </button>
+            )}
+            <button 
+              onClick={adbClient ? disconnectDevice : connectDevice} 
+              disabled={isConnecting}
+              className={`px-5 py-2 rounded-xl font-semibold transition-all flex items-center gap-2 ${adbClient ? 'bg-red-50 text-red-600 border border-red-200' : 'bg-indigo-600 text-white shadow-lg disabled:opacity-50'}`}
+            >
+              {isConnecting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plug className="w-4 h-4" />}
+              {adbClient ? '해제' : isConnecting ? '초기화 중...' : '연결'}
+            </button>
+          </div>
         </header>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 text-slate-900">
@@ -256,7 +288,7 @@ export default function App() {
                 <button onClick={async () => { if (!user || !scriptTitle) return; const scriptsRef = collection(db, 'artifacts', appId, 'users', user.uid, 'scripts'); await addDoc(scriptsRef, { title: scriptTitle, content: scriptContent, createdAt: new Date().toISOString() }); addLog(`[시스템] 저장됨.`); }} className="text-slate-400 hover:text-indigo-600 p-2"><Save className="w-5 h-5" /></button>
               </div>
               <textarea value={scriptContent} onChange={e => setScriptContent(e.target.value)} className="w-full h-64 p-4 bg-slate-900 text-slate-300 font-mono text-xs md:text-sm rounded-xl outline-none focus:ring-2 focus:ring-indigo-500" spellCheck="false" />
-              <button onClick={executeScript} disabled={isRunning || !adbClient} className={`w-full py-3.5 rounded-xl font-bold flex items-center justify-center gap-2 transition-all ${isRunning || !adbClient ? 'bg-slate-100 text-slate-400' : 'bg-indigo-600 text-white hover:bg-indigo-700 shadow-lg shadow-indigo-100'}`}>
+              <button onClick={executeScript} disabled={isRunning || !adbClient} className={`w-full py-3.5 rounded-xl font-bold flex items-center justify-center gap-2 transition-all ${isRunning || !adbClient ? 'bg-slate-100 text-slate-400 cursor-not-allowed' : 'bg-indigo-600 text-white hover:bg-indigo-700 shadow-lg shadow-indigo-100'}`}>
                 {isRunning ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
                 {isRunning ? '스크립트 실행 중...' : '스크립트 실행'}
               </button>

@@ -133,16 +133,18 @@ export default function App() {
       addLog(`[시스템] ${device.name} 연결 시도...`);
       const connection = await device.connect();
       
-      // 'features' 에러 해결: 생성자 대신 Adb.create 팩토리 메서드 사용 (핸드쉐이크 포함)
-      addLog(`[시스템] ADB 세션 초기화 및 핸드쉐이크 중...`);
-      const adb = await Adb.create(connection);
+      // 0.0.22 버전 에러 해결: create 대신 생성자 사용
+      addLog(`[시스템] ADB 객체 생성 중...`);
+      const adb = new Adb(connection);
       
-      if (!adb || !adb.subprocess) {
-        throw new Error("ADB 초기화에 실패했습니다 (subprocess 미지원)");
+      // 'features' 관련 에러 방지를 위해 객체가 유효한지 최소한의 검증 시도
+      if (!adb) {
+        throw new Error("ADB 객체 생성에 실패했습니다.");
       }
 
       setAdbClient(adb);
-      addLog(`[시스템] 기기 연결 및 초기화 성공!`);
+      addLog(`[시스템] 기기 연결 성공!`);
+      addLog(`> 폰 화면에 'USB 디버깅 허용' 팝업이 뜨면 '확인'을 눌러주세요.`);
     } catch (error) {
       if (error.message.includes('claimInterface')) {
         addLog(`[연결 실패] 다른 프로그램이 폰을 사용 중입니다. 탭을 닫고 다시 시도하세요.`);
@@ -155,7 +157,7 @@ export default function App() {
   const disconnectDevice = async () => {
     if (adbClient) {
       try {
-        await adbClient.close();
+        if (adbClient.close) await adbClient.close();
       } catch (e) {}
       setAdbClient(null);
       addLog("[시스템] 연결이 해제되었습니다.");
@@ -188,7 +190,6 @@ export default function App() {
 
   const executeScript = async () => {
     if (!adbClient) return addLog("[오류] 먼저 기기를 연결하세요.");
-    if (!adbClient.subprocess) return addLog("[오류] ADB 세션이 올바르게 초기화되지 않았습니다.");
     
     setIsRunning(true);
     addLog("=================================");
@@ -199,8 +200,14 @@ export default function App() {
         const cmd = line.trim();
         if (!cmd || cmd.startsWith('#')) continue;
 
+        // 실행 전 subprocess 유효성 체크 (초기화 지연 대비)
+        if (!adbClient.subprocess) {
+          throw new Error("ADB 기능이 아직 준비되지 않았습니다. 잠시 후 다시 시도하거나 재연결하세요.");
+        }
+
         if (cmd.startsWith('sleep ')) {
           const s = parseFloat(cmd.split(' ')[1]);
+          addLog(`> ${s}초 대기...`);
           await new Promise(r => setTimeout(r, s * 1000));
         } else if (cmd.startsWith('click("')) {
           const target = cmd.match(/click\("([^"]+)"\)/)[1];
@@ -231,7 +238,7 @@ export default function App() {
   return (
     <div className="min-h-screen bg-slate-50 p-4 md:p-8 font-sans text-slate-800">
       <div className="max-w-5xl mx-auto space-y-6">
-        <header className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 flex justify-between items-center">
+        <header className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 flex justify-between items-center text-slate-900">
           <h1 className="text-xl font-bold flex items-center gap-2">
             <Smartphone className="text-indigo-600" /> 아파트너 AI 자동화
           </h1>
@@ -242,7 +249,7 @@ export default function App() {
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 text-slate-900">
           <aside className="space-y-6">
-            <div className="bg-gradient-to-br from-indigo-600 to-violet-600 p-5 rounded-2xl text-white shadow-lg shadow-indigo-100">
+            <div className="bg-gradient-to-br from-indigo-600 to-violet-600 p-5 rounded-2xl text-white shadow-lg">
               <h3 className="font-bold mb-3 flex items-center gap-2">
                 <Sparkles className="w-4 h-4" /> AI 스마트 변환
               </h3>
@@ -275,7 +282,7 @@ export default function App() {
                 <button onClick={async () => { if (!user) return; const scriptsRef = collection(db, 'artifacts', appId, 'users', user.uid, 'scripts'); await addDoc(scriptsRef, { title: scriptTitle || '제목 없음', content: scriptContent, createdAt: new Date().toISOString() }); addLog(`[시스템] 저장됨.`); }} className="text-slate-400 hover:text-indigo-600 p-2"><Save className="w-5 h-5" /></button>
               </div>
               <textarea value={scriptContent} onChange={e => setScriptContent(e.target.value)} className="w-full h-64 p-4 bg-slate-900 text-slate-300 font-mono text-sm rounded-xl outline-none focus:ring-2 focus:ring-indigo-500" spellCheck="false" />
-              <button onClick={executeScript} disabled={isRunning || !adbClient} className={`w-full py-3 rounded-xl font-bold transition-all ${isRunning || !adbClient ? 'bg-slate-100 text-slate-400' : 'bg-indigo-600 text-white hover:bg-indigo-700 shadow-lg shadow-indigo-100'}`}>
+              <button onClick={executeScript} disabled={isRunning || !adbClient} className={`w-full py-3 rounded-xl font-bold transition-all ${isRunning || !adbClient ? 'bg-slate-100 text-slate-400' : 'bg-indigo-600 text-white hover:bg-indigo-700 shadow-lg shadow-indigo-200'}`}>
                 {isRunning ? '실행 중...' : '스크립트 실행'}
               </button>
             </section>

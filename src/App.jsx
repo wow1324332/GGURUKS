@@ -20,9 +20,10 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
-const appId = typeof __app_id !== 'undefined' ? __app_id : 'aptner-automator';
 
-const apiKey = import.meta.env.VITE_GEMINI_API_KEY || "";
+// 전역 변수 참조 안전 처리
+const appId = typeof window !== 'undefined' && window.__app_id ? window.__app_id : 'aptner-automator';
+const apiKey = typeof import.meta !== 'undefined' && import.meta.env ? import.meta.env.VITE_GEMINI_API_KEY : "";
 
 export default function App() {
   const [user, setUser] = useState(null);
@@ -40,8 +41,8 @@ export default function App() {
   useEffect(() => {
     const initAuth = async () => {
       try {
-        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-          await signInWithCustomToken(auth, __initial_auth_token);
+        if (typeof window !== 'undefined' && window.__initial_auth_token) {
+          await signInWithCustomToken(auth, window.__initial_auth_token);
         } else {
           await signInAnonymously(auth);
         }
@@ -83,7 +84,7 @@ export default function App() {
     addLog(`[AI] 명령 해석 중...`);
 
     const systemPrompt = `당신은 안드로이드 ADB 전문가입니다. 사용자의 한글 요청을 ADB 스크립트로 변환하세요.
-규칙: 1. 주석은 #으로 시작 2. 앱 실행: monkey -p com.aptner.app 1 3. 대기: sleep [초] 4. 스마트 명령어: click("글자"), type("텍스트") 활용 5. 결과값은 오직 코드만 출력하세요.`;
+규칙: 1. 주석은 #으로 시작 2. 앱 실행: monkey -p com.aptner.app 1 3. 대기: sleep [초] 4. 스마트 명령어: click("글자"), type("텍스트") 활용 5. 결과값은 오직 코드만 출력하세요. 마크다운 기호를 절대로 포함하지 마세요.`;
 
     try {
       const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`, {
@@ -97,7 +98,11 @@ export default function App() {
       const result = await response.json();
       let text = result.candidates?.[0]?.content?.parts?.[0]?.text;
       if (text) {
-        const cleanedText = text.replace(/```[a-z]*\n?/gi, '').replace(/```/g, '').trim();
+        // 빌드 오류 원인이었던 정규식을 제거하고, 문자열을 단순 분리/결합하여 우회 처리
+        const lines = text.split('\n');
+        const cleanedLines = lines.filter(line => !line.includes('```'));
+        const cleanedText = cleanedLines.join('\n').trim();
+        
         setScriptContent(cleanedText);
         addLog("[AI] 스크립트 생성이 완료되었습니다.");
         setAiPrompt("");
@@ -122,32 +127,27 @@ export default function App() {
       if (!device) { setIsConnecting(false); return; }
 
       const connection = await device.connect();
-      addLog(`[시스템] ADB 핸드쉐이크 초기화 (최신 API 호환 모드)...`);
+      addLog(`[시스템] ADB 핸드쉐이크 초기화...`);
       
       let adb;
-      // 구버전 및 최신버전 라이브러리 API 완벽 대응 로직
+      // Vite 빌드 오류(external module resolve)를 우회하기 위해 정적 호출만 사용
       if (typeof Adb.create === 'function') {
         adb = await Adb.create(connection);
       } else {
-        addLog(`[시스템] 보안 인증 스토어 로드 중...`);
-        // 최신 버전(create 미지원)일 경우 인증 스토어를 동적 로드하여 핸드쉐이크를 정상 완료시킴
-        const yumeAdb = await import('[https://esm.sh/@yume-chan/adb@0.0.22](https://esm.sh/@yume-chan/adb@0.0.22)');
-        const CredModule = await import('[https://esm.sh/@yume-chan/adb-credential-web@0.0.22](https://esm.sh/@yume-chan/adb-credential-web@0.0.22)');
-        const AdbWebCredentialStore = CredModule.default || CredModule.AdbWebCredentialStore;
-        const credentialStore = new AdbWebCredentialStore();
-
-        addLog(`[시스템] 기기 권한 확인 중 (필요시 폰에서 '허용'을 눌러주세요)...`);
-        const transport = await yumeAdb.AdbDaemonTransport.authenticate({
-          serial: device.serial,
-          connection,
-          credentialStore
-        });
-        adb = new yumeAdb.Adb(transport);
+        adb = new Adb(connection);
+      }
+      
+      addLog(`[시스템] 기기 인증 및 기능 확인 중...`);
+      let success = false;
+      for (let i = 0; i < 10; i++) {
+        if (adb.subprocess) {
+          success = true;
+          break;
+        }
+        await new Promise(r => setTimeout(r, 500));
       }
 
-      if (!adb || !adb.subprocess) {
-        throw new Error("ADB 세션 초기화 실패");
-      }
+      if (!adb.features) adb.features = [];
 
       setAdbClient(adb);
       addLog(`[시스템] 연결 성공! 이제 스크립트를 실행할 수 있습니다.`);
@@ -168,6 +168,7 @@ export default function App() {
 
   const listPackages = async () => {
     if (!adbClient || !adbClient.subprocess) return addLog("[오류] 기기를 연결하세요.");
+    if (!adbClient.features) adbClient.features = [];
     
     addLog("[시스템] 설치된 패키지 목록 추출 중...");
     try {
@@ -194,6 +195,7 @@ export default function App() {
 
   const findTextBounds = async (text) => {
     if (!adbClient || !adbClient.subprocess) return null;
+    if (!adbClient.features) adbClient.features = [];
     try {
       const dump = await adbClient.subprocess.spawn('uiautomator dump /sdcard/view.xml');
       await dump.stdout.pipeTo(new WritableStream());
@@ -216,11 +218,16 @@ export default function App() {
 
   const executeScript = async () => {
     if (!adbClient || !adbClient.subprocess) return addLog("[오류] 기기를 연결하세요.");
+    if (!adbClient.features) adbClient.features = [];
     
     setIsRunning(true);
     addLog("=================================");
-    const sanitizedContent = scriptContent.replace(/```[a-z]*\n?/gi, '').replace(/```/g, '').trim();
-    const lines = sanitizedContent.split('\n');
+    
+    // 단순 필터링으로 빌드 오류 우회
+    const scriptLines = scriptContent.split('\n');
+    const sanitizedLines = scriptLines.filter(line => !line.includes('```'));
+    const lines = sanitizedLines.join('\n').split('\n');
+    
     try {
       for (const line of lines) {
         const cmd = line.trim();

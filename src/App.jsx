@@ -22,7 +22,7 @@ const auth = getAuth(app);
 const db = getFirestore(app);
 const appId = typeof __app_id !== 'undefined' ? __app_id : 'aptner-automator';
 
-// AI API Key: Vercel 환경 변수를 사용합니다.
+// AI API Key: Vercel 환경 변수 VITE_GEMINI_API_KEY를 사용합니다.
 const apiKey = import.meta.env.VITE_GEMINI_API_KEY || "";
 
 export default function App() {
@@ -76,14 +76,13 @@ export default function App() {
   };
 
   // ==========================================
-  // AI 명령어 변환 모듈 (상세 에러 로그 추가)
+  // AI 명령어 변환 모듈 (모델 명칭 404 해결)
   // ==========================================
   const generateAiScript = async () => {
     if (!aiPrompt.trim()) return;
     
-    // API 키 유무 먼저 확인
     if (!apiKey) {
-      addLog("[AI 오류] API 키가 설정되지 않았습니다. Vercel 환경 변수(VITE_GEMINI_API_KEY)를 확인하세요.");
+      addLog("[AI 오류] API 키가 설정되지 않았습니다. Vercel 환경 변수를 확인하세요.");
       return;
     }
 
@@ -103,7 +102,8 @@ export default function App() {
       
       for (let i = 0; i <= retries; i++) {
         try {
-          const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`, {
+          // 모델 명칭을 호환성이 높은 gemini-1.5-flash로 수정하여 404 방지
+          const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({

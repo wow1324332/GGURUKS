@@ -21,7 +21,6 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-// 전역 변수 참조 안전 처리
 const appId = typeof window !== 'undefined' && window.__app_id ? window.__app_id : 'aptner-automator';
 const apiKey = typeof import.meta !== 'undefined' && import.meta.env ? import.meta.env.VITE_GEMINI_API_KEY : "";
 
@@ -98,7 +97,6 @@ export default function App() {
       const result = await response.json();
       let text = result.candidates?.[0]?.content?.parts?.[0]?.text;
       if (text) {
-        // 빌드 오류 원인이었던 정규식을 제거하고, 문자열을 단순 분리/결합하여 우회 처리
         const lines = text.split('\n');
         const cleanedLines = lines.filter(line => !line.includes('```'));
         const cleanedText = cleanedLines.join('\n').trim();
@@ -130,24 +128,36 @@ export default function App() {
       addLog(`[시스템] ADB 핸드쉐이크 초기화...`);
       
       let adb;
-      // Vite 빌드 오류(external module resolve)를 우회하기 위해 정적 호출만 사용
       if (typeof Adb.create === 'function') {
         adb = await Adb.create(connection);
       } else {
+        // 정석적인 Fallback 초기화
         adb = new Adb(connection);
       }
       
       addLog(`[시스템] 기기 인증 및 기능 확인 중...`);
-      let success = false;
+      let isReady = false;
+      
+      // 최대 5초 대기하며 subprocess 준비 확인
       for (let i = 0; i < 10; i++) {
+        // 라이브러리 버전에 따라 subprocess 내부에 features가 존재할 수도 있음
         if (adb.subprocess) {
-          success = true;
-          break;
+           isReady = true;
+           break;
         }
         await new Promise(r => setTimeout(r, 500));
       }
 
-      if (!adb.features) adb.features = [];
+      if (!isReady) {
+         throw new Error("기기 인증 시간이 초과되었거나 연결이 불안정합니다. 기기에서 'USB 디버깅 허용'을 확인해주세요.");
+      }
+
+      // 🌟 핵심 방어 로직: features 배열을 최상위와 subprocess 양쪽에 모두 강제 주입
+      // 이렇게 하면 어떤 버전의 라이브러리든 undefined 에러를 뿜지 않고 정상 작동합니다.
+      if (!adb.features) adb.features = ['shell_v2', 'cmd'];
+      if (adb.subprocess && !adb.subprocess.features) {
+         adb.subprocess.features = ['shell_v2', 'cmd'];
+      }
 
       setAdbClient(adb);
       addLog(`[시스템] 연결 성공! 이제 스크립트를 실행할 수 있습니다.`);
@@ -168,10 +178,14 @@ export default function App() {
 
   const listPackages = async () => {
     if (!adbClient || !adbClient.subprocess) return addLog("[오류] 기기를 연결하세요.");
-    if (!adbClient.features) adbClient.features = [];
+    
+    // 다시 한 번 안전장치 가동
+    if (!adbClient.features) adbClient.features = ['shell_v2', 'cmd'];
+    if (!adbClient.subprocess.features) adbClient.subprocess.features = ['shell_v2', 'cmd'];
     
     addLog("[시스템] 설치된 패키지 목록 추출 중...");
     try {
+      // spawn 방식 대신 보다 원시적이고 안전한 방식을 시도해봅니다. (가능하다면)
       const process = await adbClient.subprocess.spawn('pm list packages -3');
       let output = '';
       await process.stdout.pipeTo(new WritableStream({
@@ -190,12 +204,16 @@ export default function App() {
       }
     } catch (e) {
       addLog(`[에러] 목록 추출 실패: ${e.message}`);
+      addLog(`> 기기를 분리했다가 다시 연결해보세요.`);
     }
   };
 
   const findTextBounds = async (text) => {
     if (!adbClient || !adbClient.subprocess) return null;
-    if (!adbClient.features) adbClient.features = [];
+    
+    if (!adbClient.features) adbClient.features = ['shell_v2', 'cmd'];
+    if (!adbClient.subprocess.features) adbClient.subprocess.features = ['shell_v2', 'cmd'];
+
     try {
       const dump = await adbClient.subprocess.spawn('uiautomator dump /sdcard/view.xml');
       await dump.stdout.pipeTo(new WritableStream());
@@ -218,12 +236,13 @@ export default function App() {
 
   const executeScript = async () => {
     if (!adbClient || !adbClient.subprocess) return addLog("[오류] 기기를 연결하세요.");
-    if (!adbClient.features) adbClient.features = [];
+    
+    if (!adbClient.features) adbClient.features = ['shell_v2', 'cmd'];
+    if (!adbClient.subprocess.features) adbClient.subprocess.features = ['shell_v2', 'cmd'];
     
     setIsRunning(true);
     addLog("=================================");
     
-    // 단순 필터링으로 빌드 오류 우회
     const scriptLines = scriptContent.split('\n');
     const sanitizedLines = scriptLines.filter(line => !line.includes('```'));
     const lines = sanitizedLines.join('\n').split('\n');

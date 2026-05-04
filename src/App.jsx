@@ -4,7 +4,7 @@ import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged }
 import { getFirestore, collection, addDoc, onSnapshot, deleteDoc, doc } from "firebase/firestore";
 import { Terminal, Smartphone, Play, Save, Trash2, Plug, Info, Sparkles, Loader2, RefreshCw, List } from 'lucide-react';
 
-// WebADB 라이브러리 (정적 임포트로 빌드 에러 방지)
+// 안정적인 0.0.20 버전의 라이브러리 정적 임포트
 import { Adb } from '@yume-chan/adb';
 import { AdbDaemonWebUsbDeviceManager } from '@yume-chan/adb-daemon-webusb';
 
@@ -36,17 +36,15 @@ export default function App() {
   const [isGenerating, setIsGenerating] = useState(false);
   const logsEndRef = useRef(null);
 
-  // Vercel 환경 변수 안전하게 가져오기
   const [apiKey, setApiKey] = useState("");
 
   useEffect(() => {
-    // import.meta를 try-catch로 감싸서 환경에 상관없이 빌드가 터지지 않도록 보호
     try {
         if (import.meta && import.meta.env) {
             setApiKey(import.meta.env.VITE_GEMINI_API_KEY || "");
         }
     } catch (e) {
-        // 로컬 환경 등의 fallback
+        console.warn("환경 변수를 불러올 수 없습니다.");
     }
   }, []);
 
@@ -113,7 +111,6 @@ export default function App() {
       const result = await response.json();
       let text = result.candidates?.[0]?.content?.parts?.[0]?.text;
       if (text) {
-        // 파서 충돌을 막기 위해 문자열 코드로 백틱 필터링 우회
         const bt3 = String.fromCharCode(96, 96, 96);
         const lines = text.split('\n');
         const cleanedLines = lines.filter(line => line.indexOf(bt3) === -1);
@@ -130,7 +127,6 @@ export default function App() {
     }
   };
 
-  // 가장 안정적이었던 이전 연결 로직 복구
   const connectDevice = async () => {
     if (isConnecting) return;
     setIsConnecting(true);
@@ -154,37 +150,11 @@ export default function App() {
       addLog(`[시스템] ${device.name} 연결 시도...`);
       const connection = await device.connect();
       
-      addLog(`[시스템] ADB 핸드쉐이크 초기화...`);
-      let adb;
-      try {
-        // 정석적인 Fallback 초기화 (이전에 성공했던 방식)
-        adb = new Adb(connection);
-      } catch (e) {
-        throw new Error("ADB 인스턴스 생성 실패");
-      }
+      addLog(`[시스템] ADB 핸드쉐이크 초기화 (안정 버전)...`);
       
-      addLog(`[시스템] 기기 인증 및 기능 확인 중...`);
-      let isReady = false;
+      // 0.0.20 버전의 가장 안정적인 인증 및 연결 방식
+      const adb = await Adb.create(connection);
       
-      // 최대 5초 대기하며 subprocess 준비 확인
-      for (let i = 0; i < 10; i++) {
-        if (adb.subprocess) {
-           isReady = true;
-           break;
-        }
-        await new Promise(r => setTimeout(r, 500));
-      }
-
-      if (!isReady) {
-         throw new Error("기기 인증 시간이 초과되었거나 연결이 불안정합니다. 기기에서 'USB 디버깅 허용'을 확인해주세요.");
-      }
-
-      // 🌟 핵심 방어 로직: features 배열을 최상위와 subprocess 양쪽에 모두 강제 주입
-      if (!adb.features) adb.features = ['shell_v2', 'cmd'];
-      if (adb.subprocess && !adb.subprocess.features) {
-         adb.subprocess.features = ['shell_v2', 'cmd'];
-      }
-
       setAdbClient(adb);
       addLog(`[시스템] 연결 성공! 이제 스크립트를 실행할 수 있습니다.`);
       
@@ -209,16 +179,11 @@ export default function App() {
   const listPackages = async () => {
     if (!adbClient || !adbClient.subprocess) return addLog("[오류] 기기를 연결하세요.");
     
-    // 다시 한 번 안전장치 가동
-    if (!adbClient.features) adbClient.features = ['shell_v2', 'cmd'];
-    if (!adbClient.subprocess.features) adbClient.subprocess.features = ['shell_v2', 'cmd'];
-    
     addLog("[시스템] 설치된 패키지 목록 추출 중...");
     try {
       const process = await adbClient.subprocess.spawn('pm list packages -3');
       let output = '';
       
-      // 스트림 읽기 에러를 방지하는 가장 안전한 방식
       await process.stdout.pipeTo(new WritableStream({
         write(chunk) { output += new TextDecoder().decode(chunk); }
       }));
@@ -241,10 +206,6 @@ export default function App() {
 
   const findTextBounds = async (text) => {
     if (!adbClient || !adbClient.subprocess) return null;
-    
-    if (!adbClient.features) adbClient.features = ['shell_v2', 'cmd'];
-    if (!adbClient.subprocess.features) adbClient.subprocess.features = ['shell_v2', 'cmd'];
-
     try {
       const dump = await adbClient.subprocess.spawn('uiautomator dump /sdcard/view.xml');
       await dump.stdout.pipeTo(new WritableStream());
@@ -269,9 +230,6 @@ export default function App() {
 
   const executeScript = async () => {
     if (!adbClient || !adbClient.subprocess) return addLog("[오류] 기기를 연결하세요.");
-    
-    if (!adbClient.features) adbClient.features = ['shell_v2', 'cmd'];
-    if (!adbClient.subprocess.features) adbClient.subprocess.features = ['shell_v2', 'cmd'];
     
     setIsRunning(true);
     addLog("=================================");

@@ -4,9 +4,9 @@ import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged }
 import { getFirestore, collection, addDoc, onSnapshot, deleteDoc, doc } from "firebase/firestore";
 import { Terminal, Smartphone, Play, Save, Trash2, Plug, Info, Sparkles, Loader2 } from 'lucide-react';
 
-// WebADB 라이브러리
+// WebADB 라이브러리 - 정확한 임포트
 import { Adb } from '@yume-chan/adb';
-import * as AdbWebUsb from '@yume-chan/adb-daemon-webusb';
+import { AdbDaemonWebUsbDeviceManager } from '@yume-chan/adb-daemon-webusb';
 
 const firebaseConfig = {
   apiKey: "AIzaSyCeLR6Mfh1ClXA2YzLYaleF8BolJG31CIA",
@@ -81,13 +81,13 @@ export default function App() {
     setIsGenerating(true);
     addLog(`[AI] 명령 해석 중...`);
 
-    const systemPrompt = `당신은 안드로이드 ADB 전문가입니다. 사용자의 한글 요청을 ADB 쉘 스크립트로 변환하세요.
+    const systemPrompt = `당신은 안드로이드 ADB 전문가입니다. 사용자의 한글 요청을 ADB 스크립트로 변환하세요.
 규칙: 
 1. 주석은 #으로 시작 
 2. 앱 실행: monkey -p com.aptner.app 1 
 3. 대기: sleep [초] 
 4. 스마트 명령어: click("글자"), type("텍스트") 활용 
-5. 결과값은 오직 코드만 출력하세요. 마크다운 기호(예: \`\`\`bash)는 절대 넣지 마세요.`;
+5. 코드만 출력하세요. 마크다운 기호(예: \`\`\`bash)는 절대 넣지 마세요.`;
 
     try {
       const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`, {
@@ -120,7 +120,7 @@ export default function App() {
     }
   };
 
-  // 🛠️ 연결 로직 대폭 강화: Adb.create 실패 문제를 방지
+  // 🛠️ 연결 로직 핵심 수정: Adb.create를 올바르게 사용하여 features 오류 방지
   const connectDevice = async () => {
     try {
       if (adbClient) {
@@ -128,34 +128,38 @@ export default function App() {
         await new Promise(r => setTimeout(r, 500));
       }
 
-      const manager = AdbWebUsb.AdbDaemonWebUsbDeviceManager.BROWSER;
+      // 1. 매니저 접근 (임포트된 클래스 사용)
+      const manager = AdbDaemonWebUsbDeviceManager.BROWSER;
+      if (!manager) throw new Error("이 브라우저는 WebUSB를 지원하지 않습니다.");
+
       const device = await manager.requestDevice();
       if (!device) return;
 
       addLog(`[시스템] ${device.name} 연결 시도...`);
       const connection = await device.connect();
       
-      addLog(`[시스템] ADB 세션 동기화 중...`);
+      addLog(`[시스템] ADB 세션 동기화 시작...`);
       addLog(`> 폰 화면에서 'USB 디버깅 허용'을 꼭 눌러주세요!`);
 
-      // Adb.create는 기기 인증이 안되면 실패함. 이를 위해 타임아웃을 두고 시도.
+      // 2. 인증 완료될 때까지 Adb.create가 성공해야 함 (생성자 직접 사용 금지)
+      // v0.0.22에서 Adb.create는 첫 번째 인자로 connection을 받음
       let adb;
       try {
-        // 인증 허용을 기다리기 위해 최대 5초간 대기하는 로직 시뮬레이션
+        // 인증 허용 대기 시간을 위해 Adb.create 시도
         adb = await Adb.create(connection);
-      } catch (e) {
-        addLog(`[알림] 인증 대기 중 또는 초기화 지연...`);
-        // 직접 생성으로 넘어가되, 이후 subprocess 사용 시점에 다시 체크하도록 유도
-        adb = new Adb(connection);
+      } catch (authError) {
+        addLog(`[인증 대기] 폰 화면의 '항상 허용'을 누르고 다시 연결 버튼을 눌러주세요.`);
+        return;
       }
       
-      if (!adb) throw new Error("ADB 객체 초기화 실패");
+      if (!adb || !adb.subprocess) {
+        throw new Error("ADB 초기화에 실패했습니다. 기기 인증 여부를 확인하세요.");
+      }
 
       setAdbClient(adb);
-      addLog(`[시스템] 기기 연결 완료!`);
+      addLog(`[시스템] 기기 연결 및 기능 로드 완료!`);
     } catch (error) {
         addLog(`[연결 실패] ${error.message}`);
-        addLog(`> 다른 브라우저 탭이나 프로그램을 모두 닫고 시도하세요.`);
     }
   };
 
@@ -172,7 +176,6 @@ export default function App() {
   const findTextBounds = async (text) => {
     if (!adbClient || !adbClient.subprocess) return null;
     try {
-      // 인증 여부 확인을 위해 간단한 덤프 시도
       const dump = await adbClient.subprocess.spawn('uiautomator dump /sdcard/view.xml');
       await dump.stdout.pipeTo(new WritableStream());
       await dump.exit;
@@ -203,7 +206,7 @@ export default function App() {
     setIsRunning(true);
     addLog("=================================");
     
-    // 마크다운 잔여물 제거
+    // AI가 생성한 스크립트에 마크다운이 섞여있을 경우를 위해 한 번 더 정제
     const sanitizedContent = scriptContent.replace(/```[a-z]*\n?/gi, '').replace(/```/g, '').trim();
     const lines = sanitizedContent.split('\n');
     
@@ -212,11 +215,9 @@ export default function App() {
         const cmd = line.trim();
         if (!cmd || cmd.startsWith('#')) continue;
 
-        // ⚠️ 여기서 features 오류를 방지하기 위해 subprocess 유무를 매번 체크
+        // ⚠️ features 오류 방지: subprocess가 있는지 매 루프마다 확인
         if (!adbClient.subprocess) {
-            addLog("[오류] 기기 기능이 활성화되지 않았습니다. (인증 미승인 또는 초기화 실패)");
-            addLog("> 폰에서 '항상 허용'을 체크하고 재연결해보세요.");
-            break;
+            throw new Error("기기 기능이 아직 준비되지 않았습니다. 인증 승인 후 재연결하세요.");
         }
 
         if (cmd.startsWith('sleep ')) {
@@ -267,7 +268,7 @@ export default function App() {
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 text-slate-900">
           <aside className="space-y-6">
-            <div className="bg-gradient-to-br from-indigo-600 to-violet-600 p-5 rounded-2xl text-white shadow-lg">
+            <div className="bg-gradient-to-br from-indigo-600 to-violet-600 p-5 rounded-2xl text-white shadow-lg shadow-indigo-100">
               <h3 className="font-bold mb-3 flex items-center gap-2">
                 <Sparkles className="w-4 h-4" /> AI 스마트 변환
               </h3>
@@ -300,7 +301,7 @@ export default function App() {
                 <button onClick={async () => { if (!user) return; const scriptsRef = collection(db, 'artifacts', appId, 'users', user.uid, 'scripts'); await addDoc(scriptsRef, { title: scriptTitle || '제목 없음', content: scriptContent, createdAt: new Date().toISOString() }); addLog(`[시스템] 저장됨.`); }} className="text-slate-400 hover:text-indigo-600 p-2"><Save className="w-5 h-5" /></button>
               </div>
               <textarea value={scriptContent} onChange={e => setScriptContent(e.target.value)} className="w-full h-64 p-4 bg-slate-900 text-slate-300 font-mono text-sm rounded-xl outline-none focus:ring-2 focus:ring-indigo-500" spellCheck="false" />
-              <button onClick={executeScript} disabled={isRunning || !adbClient} className={`w-full py-3 rounded-xl font-bold transition-all ${isRunning || !adbClient ? 'bg-slate-100 text-slate-400' : 'bg-indigo-600 text-white hover:bg-indigo-700 shadow-lg shadow-indigo-200'}`}>
+              <button onClick={executeScript} disabled={isRunning || !adbClient} className={`w-full py-3 rounded-xl font-bold transition-all ${isRunning || !adbClient ? 'bg-slate-100 text-slate-400' : 'bg-indigo-600 text-white hover:bg-indigo-700 shadow-lg shadow-indigo-100'}`}>
                 {isRunning ? '실행 중...' : '스크립트 실행'}
               </button>
             </section>

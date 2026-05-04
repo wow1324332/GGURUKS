@@ -4,6 +4,11 @@ import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged }
 import { getFirestore, collection, addDoc, onSnapshot, deleteDoc, doc } from "firebase/firestore";
 import { Terminal, Smartphone, Play, Save, Trash2, Plug, Info, Sparkles, Loader2, RefreshCw, List } from 'lucide-react';
 
+// WebADB 최신 라이브러리 (정적 임포트 사용)
+import { Adb, AdbDaemonTransport } from '@yume-chan/adb';
+import { AdbDaemonWebUsbDeviceManager } from '@yume-chan/adb-daemon-webusb';
+import { AdbWebCredentialStore } from '@yume-chan/adb-credential-web';
+
 const firebaseConfig = {
   apiKey: "AIzaSyCeLR6Mfh1ClXA2YzLYaleF8BolJG31CIA",
   authDomain: "automatics-16a4b.firebaseapp.com",
@@ -22,7 +27,7 @@ const apiKey = typeof import.meta !== 'undefined' && import.meta.env ? import.me
 
 export default function App() {
   const [user, setUser] = useState(null);
-  const [adbDevice, setAdbDevice] = useState(null);
+  const [adbClient, setAdbClient] = useState(null);
   const [scripts, setScripts] = useState([]);
   const [scriptTitle, setScriptTitle] = useState('');
   const [scriptContent, setScriptContent] = useState('# 명령어를 입력하거나 AI를 사용하세요.');
@@ -32,10 +37,6 @@ export default function App() {
   const [aiPrompt, setAiPrompt] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
   const logsEndRef = useRef(null);
-  
-  // WebUSB 엔드포인트 정보
-  const endpointInRef = useRef(null);
-  const endpointOutRef = useRef(null);
 
   useEffect(() => {
     const initAuth = async () => {
@@ -112,123 +113,129 @@ export default function App() {
     }
   };
 
-  // WebUSB 통신 유틸리티 함수
-  const sendAdbCommand = async (command) => {
-    if (!adbDevice || !endpointInRef.current || !endpointOutRef.current) {
-        throw new Error("장치가 연결되지 않았습니다.");
-    }
-    
-    // 단순화된 셸 명령어 실행
-    // 실제 완전한 구현을 위해서는 ADB 프로토콜 스펙(SYNC, OPEN, WRTE, OKAY, CLSE) 구현이 필요하지만,
-    // 브라우저 환경 제약으로 인해 WebUSB를 직접 다루는 것은 매우 복잡합니다.
-    // 여기서는 개념적인 구현만을 보여주며, 실제 실행은 어려울 수 있습니다.
-    addLog(`> 명령 전송: ${command}`);
-    addLog("[안내] 현재 브라우저 환경 제약으로 직접적인 셸 명령어 실행이 제한적일 수 있습니다.");
-    // ... 실제 USB 통신 로직 ...
-    return "명령 실행 시뮬레이션 성공";
-  }
-
   const connectDevice = async () => {
     if (isConnecting) return;
     setIsConnecting(true);
     try {
-      if (adbDevice) {
-        await disconnectDevice();
+      if (adbClient) {
+        try { await adbClient.close(); } catch(e) {}
+        setAdbClient(null);
       }
       
-      addLog(`[시스템] WebUSB 권한 요청 중...`);
-      // ADB 인터페이스(클래스 255, 서브클래스 66, 프로토콜 1) 필터링
-      const device = await navigator.usb.requestDevice({
-          filters: [{ classCode: 255, subclassCode: 66, protocolCode: 1 }]
-      });
+      const manager = AdbDaemonWebUsbDeviceManager.BROWSER;
+      if (!manager) {
+          throw new Error("WebUSB를 지원하지 않는 브라우저입니다.");
+      }
 
+      const device = await manager.requestDevice();
       if (!device) {
           setIsConnecting(false);
           return;
       }
 
-      addLog(`[시스템] ${device.productName} 장치 연결 중...`);
-      await device.open();
+      addLog(`[시스템] ${device.name} 연결 중...`);
+      const connection = await device.connect();
       
-      if (device.configuration === null) {
-          await device.selectConfiguration(1);
-      }
+      addLog(`[시스템] 보안 인증 설정 중 (필요시 기기에서 '허용'을 눌러주세요)...`);
       
-      // ADB 인터페이스 찾기
-      const interfaces = device.configuration.interfaces;
-      let adbInterfaceNumber = -1;
-      let endpointIn = -1;
-      let endpointOut = -1;
+      // 최신 라이브러리의 정석적인 인증 절차 적용
+      // 브라우저의 IndexedDB에 RSA 키를 저장하고 관리하는 스토어 생성
+      const credentialStore = new AdbWebCredentialStore();
+      
+      // 전송 계층 생성 및 인증 핸드쉐이크 수행
+      const transport = await AdbDaemonTransport.authenticate({
+        serial: device.serial,
+        connection,
+        credentialStore
+      });
 
-      for (let iface of interfaces) {
-        for (let alt of iface.alternates) {
-          if (alt.interfaceClass === 255 && alt.interfaceSubclass === 66 && alt.interfaceProtocol === 1) {
-            adbInterfaceNumber = iface.interfaceNumber;
-            for (let ep of alt.endpoints) {
-              if (ep.direction === "in") endpointIn = ep.endpointNumber;
-              if (ep.direction === "out") endpointOut = ep.endpointNumber;
-            }
-          }
-        }
-      }
+      // 인증이 완료된 transport를 기반으로 최종 ADB 인스턴스 생성
+      // 이 과정을 거쳐야만 기기의 기능을 확인하는 features 배열이 정상적으로 로드됨
+      const adb = new Adb(transport);
 
-      if (adbInterfaceNumber === -1) {
-          throw new Error("ADB 인터페이스를 찾을 수 없습니다.");
+      if (!adb || !adb.subprocess) {
+        throw new Error("ADB 세션 초기화 실패");
       }
 
-      await device.claimInterface(adbInterfaceNumber);
-      
-      endpointInRef.current = endpointIn;
-      endpointOutRef.current = endpointOut;
-      setAdbDevice(device);
-      
-      addLog(`[시스템] 기기 연결 성공 (원시 WebUSB 모드).`);
+      setAdbClient(adb);
+      addLog(`[시스템] 인증 및 연결 성공! 모든 기능을 사용할 수 있습니다.`);
       
     } catch (error) {
         addLog(`[연결 실패] ${error.message}`);
+        if (error.message.includes('claimInterface')) {
+            addLog(`> 다른 브라우저 탭이나 프로그램을 모두 닫고 시도하세요.`);
+        }
     } finally {
       setIsConnecting(false);
     }
   };
 
   const disconnectDevice = async () => {
-    if (adbDevice) {
-      try { 
-         // ADB 인터페이스 릴리즈 및 장치 닫기 시도
-         await adbDevice.close(); 
-      } catch (e) {
-          console.error(e)
-      }
-      setAdbDevice(null);
-      endpointInRef.current = null;
-      endpointOutRef.current = null;
+    if (adbClient) {
+      try { await adbClient.close(); } catch (e) {}
+      setAdbClient(null);
       addLog("[시스템] 연결이 해제되었습니다.");
     }
   };
 
   const listPackages = async () => {
-    if (!adbDevice) return addLog("[오류] 기기를 연결하세요.");
-    addLog("[시스템] 설치된 패키지 목록 추출 시도 중...");
+    if (!adbClient || !adbClient.subprocess) return addLog("[오류] 기기를 연결하세요.");
+    
+    addLog("[시스템] 설치된 패키지 목록 추출 중...");
     try {
-       await sendAdbCommand('pm list packages -3');
-       addLog("[안내] 현재 모드에서는 패키지 목록의 직접 반환이 어려울 수 있습니다.");
+      // 이제 정상적인 transport 기반이므로 spawn 명령이 정상 작동합니다.
+      const process = await adbClient.subprocess.spawn('pm list packages -3');
+      let output = '';
+      
+      // stdout 스트림 읽기
+      for await (const chunk of process.stdout) {
+          output += new TextDecoder().decode(chunk);
+      }
+      
+      await process.exit;
+
+      const packages = output.split('\n').filter(line => line.includes('aptner')).map(line => line.replace('package:', '').trim());
+
+      if (packages.length > 0) {
+        addLog(`[발견] 아파트너 관련 패키지: ${packages.join(', ')}`);
+        addLog(`> 이 이름을 스크립트의 monkey -p 뒤에 넣으세요.`);
+      } else {
+        addLog("[안내] 'aptner'가 포함된 패키지를 찾지 못했습니다. 전체 목록을 보려면 'pm list packages -3'을 실행하세요.");
+        console.log(output);
+      }
     } catch (e) {
       addLog(`[에러] 목록 추출 실패: ${e.message}`);
     }
   };
 
   const findTextBounds = async (text) => {
-    if (!adbDevice) return null;
+    if (!adbClient || !adbClient.subprocess) return null;
     try {
-        await sendAdbCommand(`uiautomator dump /sdcard/view.xml`);
-        await sendAdbCommand(`cat /sdcard/view.xml`);
-        addLog(`[안내] '${text}' 찾기 시뮬레이션`);
-        return null;
+      const dump = await adbClient.subprocess.spawn('uiautomator dump /sdcard/view.xml');
+      for await (const chunk of dump.stdout) {} // 스트림 소진
+      await dump.exit;
+      
+      const cat = await adbClient.subprocess.spawn('cat /sdcard/view.xml');
+      let xml = '';
+      for await (const chunk of cat.stdout) {
+          xml += new TextDecoder().decode(chunk);
+      }
+      await cat.exit;
+      
+      const reg = new RegExp(`(?:text|content-desc)="[^"]*?${text}[^"]*?".*?bounds="\\[(\\d+),(\\d+)\\]\\[(\\d+),(\\d+)\\]"`, 'i');
+      const m = xml.match(reg);
+      if (m) {
+        const x = Math.floor((parseInt(m[1]) + parseInt(m[3])) / 2);
+        const y = Math.floor((parseInt(m[2]) + parseInt(m[4])) / 2);
+        addLog(`[발견] '${text}' (${x}, ${y})`);
+        return { x, y };
+      }
+      return null;
     } catch (e) { return null; }
   };
 
   const executeScript = async () => {
-    if (!adbDevice) return addLog("[오류] 기기를 연결하세요.");
+    if (!adbClient || !adbClient.subprocess) return addLog("[오류] 기기를 연결하세요.");
     
     setIsRunning(true);
     addLog("=================================");
@@ -246,15 +253,22 @@ export default function App() {
         } else if (cmd.startsWith('click("')) {
           const target = cmd.match(/click\("([^"]+)"\)/)?.[1];
           if (target) {
-            await findTextBounds(target);
+            const pos = await findTextBounds(target);
+            if (pos) {
+                const proc = await adbClient.subprocess.spawn(`input tap ${pos.x} ${pos.y}`);
+                await proc.exit;
+            }
           }
         } else if (cmd.startsWith('type("')) {
           const txt = cmd.match(/type\("([^"]+)"\)/)?.[1]?.replace(/ /g, '%s');
           if (txt) {
-             await sendAdbCommand(`input text '${txt}'`);
+              const proc = await adbClient.subprocess.spawn(`input text '${txt}'`);
+              await proc.exit;
           }
         } else {
-          await sendAdbCommand(cmd);
+          addLog(`> 명령 전송: ${cmd}`);
+          const proc = await adbClient.subprocess.spawn(cmd);
+          await proc.exit;
         }
       }
       addLog("✅ 스크립트 실행 완료.");
@@ -269,18 +283,18 @@ export default function App() {
             <Smartphone className="text-indigo-600" /> 아파트너 AI 자동화
           </h1>
           <div className="flex items-center gap-2">
-            {adbDevice && (
+            {adbClient && (
               <button onClick={listPackages} className="px-4 py-2 bg-slate-100 text-slate-600 rounded-xl text-sm font-medium hover:bg-slate-200 transition-colors flex items-center gap-2">
                 <List className="w-4 h-4" /> 패키지 목록
               </button>
             )}
             <button 
-              onClick={adbDevice ? disconnectDevice : connectDevice} 
+              onClick={adbClient ? disconnectDevice : connectDevice} 
               disabled={isConnecting}
-              className={`px-5 py-2 rounded-xl font-semibold transition-all flex items-center gap-2 ${adbDevice ? 'bg-red-50 text-red-600 border border-red-200' : 'bg-indigo-600 text-white shadow-lg disabled:opacity-50'}`}
+              className={`px-5 py-2 rounded-xl font-semibold transition-all flex items-center gap-2 ${adbClient ? 'bg-red-50 text-red-600 border border-red-200' : 'bg-indigo-600 text-white shadow-lg disabled:opacity-50'}`}
             >
               {isConnecting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plug className="w-4 h-4" />}
-              {adbDevice ? '해제' : isConnecting ? '초기화 중...' : '연결'}
+              {adbClient ? '해제' : isConnecting ? '초기화 중...' : '연결'}
             </button>
           </div>
         </header>
@@ -318,7 +332,7 @@ export default function App() {
                 <button onClick={async () => { if (!user || !scriptTitle) return; const scriptsRef = collection(db, 'artifacts', appId, 'users', user.uid, 'scripts'); await addDoc(scriptsRef, { title: scriptTitle, content: scriptContent, createdAt: new Date().toISOString() }); addLog(`[시스템] 저장됨.`); }} className="text-slate-400 hover:text-indigo-600 p-2"><Save className="w-5 h-5" /></button>
               </div>
               <textarea value={scriptContent} onChange={e => setScriptContent(e.target.value)} className="w-full h-64 p-4 bg-slate-900 text-slate-300 font-mono text-xs md:text-sm rounded-xl outline-none focus:ring-2 focus:ring-indigo-500" spellCheck="false" />
-              <button onClick={executeScript} disabled={isRunning || !adbDevice} className={`w-full py-3.5 rounded-xl font-bold flex items-center justify-center gap-2 transition-all ${isRunning || !adbDevice ? 'bg-slate-100 text-slate-400 cursor-not-allowed' : 'bg-indigo-600 text-white hover:bg-indigo-700 shadow-lg shadow-indigo-100'}`}>
+              <button onClick={executeScript} disabled={isRunning || !adbClient} className={`w-full py-3.5 rounded-xl font-bold flex items-center justify-center gap-2 transition-all ${isRunning || !adbClient ? 'bg-slate-100 text-slate-400 cursor-not-allowed' : 'bg-indigo-600 text-white hover:bg-indigo-700 shadow-lg shadow-indigo-100'}`}>
                 {isRunning ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
                 {isRunning ? '스크립트 실행 중...' : '스크립트 실행'}
               </button>

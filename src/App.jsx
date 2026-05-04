@@ -76,11 +76,10 @@ export default function App() {
   };
 
   // ==========================================
-  // AI 명령어 변환 모듈 (모델 명칭 404 해결)
+  // AI 명령어 변환 모듈 (가장 안정적인 모델 별칭 사용)
   // ==========================================
   const generateAiScript = async () => {
     if (!aiPrompt.trim()) return;
-    
     if (!apiKey) {
       addLog("[AI 오류] API 키가 설정되지 않았습니다. Vercel 환경 변수를 확인하세요.");
       return;
@@ -92,18 +91,17 @@ export default function App() {
     const systemPrompt = `당신은 안드로이드 ADB 스크립트 전문가입니다. 사용자의 한글 요청을 받아서 실행 가능한 ADB 쉘 스크립트로 변환하세요.
 규칙:
 1. 주석은 #으로 시작합니다.
-2. 앱 실행은 monkey -p [패키지명] 1 명령어를 사용하세요. 아파트너 패키지명은 com.aptner.app 입니다.
+2. 앱 실행은 monkey -p com.aptner.app 1 명령어를 사용하세요.
 3. 대기는 sleep [초] 형식을 사용하세요.
 4. 스마트 명령어 click("[글자]")와 type("[텍스트]")를 적극적으로 활용하세요.
 5. 결과값은 오직 코드만 출력하세요. 설명은 필요 없습니다.`;
 
     const callGeminiWithRetry = async (prompt, retries = 5) => {
       const delays = [1000, 2000, 4000, 8000, 16000];
-      
       for (let i = 0; i <= retries; i++) {
         try {
-          // 모델 명칭을 호환성이 높은 gemini-1.5-flash로 수정하여 404 방지
-          const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, {
+          // 가장 보편적으로 지원되는 최신 별칭(Alias) 사용
+          const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${apiKey}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -121,7 +119,6 @@ export default function App() {
           const text = result.candidates?.[0]?.content?.parts?.[0]?.text;
           if (!text) throw new Error('AI로부터 빈 응답을 받았습니다.');
           return text;
-
         } catch (error) {
           if (i === retries) throw error;
           await new Promise(r => setTimeout(r, delays[i]));
@@ -217,20 +214,27 @@ export default function App() {
           addLog(`> ${s}초 대기...`);
           await new Promise(r => setTimeout(r, s * 1000));
         } else if (cmd.startsWith('click("')) {
-          const target = cmd.match(/click\("([^"]+)"\)/)[1];
-          const pos = await findTextBounds(target);
-          if (pos) {
-            await (await adbClient.subprocess.spawn(`input tap ${pos.x} ${pos.y}`)).exit;
+          const targetMatch = cmd.match(/click\("([^"]+)"\)/);
+          if (targetMatch) {
+            const target = targetMatch[1];
+            const pos = await findTextBounds(target);
+            if (pos) {
+              const proc = await adbClient.subprocess.spawn(`input tap ${pos.x} ${pos.y}`);
+              await proc.exit;
+            }
           }
         } else if (cmd.startsWith('type("')) {
           const txtMatch = cmd.match(/type\("([^"]+)"\)/);
           if (txtMatch) {
             const txt = txtMatch[1].replace(/ /g, '%s');
-            await (await adbClient.subprocess.spawn(`input text '${txt}'`)).exit;
+            // 문법 오류 완벽 수정: 세미콜론 및 괄호 구조
+            const proc = await adbClient.subprocess.spawn(`input text '${txt}'`);
+            await proc.exit;
           }
         } else {
           addLog(`> shell: ${cmd}`);
-          await (await adbClient.subprocess.spawn(cmd)).exit;
+          const proc = await adbClient.subprocess.spawn(cmd);
+          await proc.exit;
         }
       }
       addLog("✅ 모든 작업 완료.");
@@ -245,17 +249,17 @@ export default function App() {
   return (
     <div className="min-h-screen bg-slate-50 p-4 md:p-8 font-sans text-slate-800">
       <div className="max-w-5xl mx-auto space-y-6">
-        <header className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 flex justify-between items-center">
+        <header className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 flex justify-between items-center text-slate-900">
           <h1 className="text-xl font-bold flex items-center gap-2">
             <Smartphone className="text-indigo-600" /> 아파트너 AI 자동화
           </h1>
-          <button onClick={adbClient ? disconnectDevice : connectDevice} className={`px-5 py-2 rounded-xl font-semibold ${adbClient ? 'bg-red-50 text-red-600 border border-red-200' : 'bg-indigo-600 text-white'}`}>
+          <button onClick={adbClient ? disconnectDevice : connectDevice} className={`px-5 py-2 rounded-xl font-semibold transition-colors ${adbClient ? 'bg-red-50 text-red-600 border border-red-200' : 'bg-indigo-600 text-white'}`}>
             <Plug className="w-4 h-4 inline mr-2" /> {adbClient ? '해제' : '연결'}
           </button>
         </header>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <aside className="space-y-6">
+          <aside className="space-y-6 text-slate-900">
             <div className="bg-gradient-to-br from-indigo-600 to-violet-600 p-5 rounded-2xl text-white shadow-lg">
               <h3 className="font-bold mb-3 flex items-center gap-2">
                 <Sparkles className="w-4 h-4" /> AI 스마트 변환
@@ -269,7 +273,7 @@ export default function App() {
                   value={aiPrompt}
                   onChange={(e) => setAiPrompt(e.target.value)}
                   placeholder="예: 앱 열고 3초 뒤에 확인 클릭"
-                  className="w-full p-3 bg-white/10 border border-white/20 rounded-xl text-sm placeholder:text-white/40 focus:outline-none focus:ring-2 focus:ring-white/50"
+                  className="w-full p-3 bg-white/10 border border-white/20 rounded-xl text-sm placeholder:text-white/40 focus:outline-none focus:ring-2 focus:ring-white/50 text-white"
                   onKeyDown={(e) => e.key === 'Enter' && generateAiScript()}
                 />
                 <button 
@@ -302,7 +306,7 @@ export default function App() {
           <main className="lg:col-span-2 space-y-6">
             <section className="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm space-y-4">
               <div className="flex justify-between items-center">
-                <input type="text" value={scriptTitle} onChange={e => setScriptTitle(e.target.value)} placeholder="제목을 입력하세요" className="flex-1 text-lg font-bold border-b outline-none pb-1 focus:border-indigo-500" />
+                <input type="text" value={scriptTitle} onChange={e => setScriptTitle(e.target.value)} placeholder="제목을 입력하세요" className="flex-1 text-lg font-bold border-b outline-none pb-1 focus:border-indigo-500 text-slate-900" />
                 <button onClick={async () => {
                    if (!user) return;
                    const scriptsRef = collection(db, 'artifacts', appId, 'users', user.uid, 'scripts');

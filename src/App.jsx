@@ -22,8 +22,7 @@ const auth = getAuth(app);
 const db = getFirestore(app);
 const appId = typeof __app_id !== 'undefined' ? __app_id : 'aptner-automator';
 
-// AI API Key: Vercel 환경 변수를 사용하도록 수정되었습니다.
-// 배포 시 Vercel 대시보드에서 VITE_GEMINI_API_KEY를 추가하세요.
+// AI API Key: Vercel 환경 변수를 사용합니다.
 const apiKey = import.meta.env.VITE_GEMINI_API_KEY || "";
 
 export default function App() {
@@ -77,10 +76,17 @@ export default function App() {
   };
 
   // ==========================================
-  // AI 명령어 변환 모듈 (규격 준수)
+  // AI 명령어 변환 모듈 (상세 에러 로그 추가)
   // ==========================================
   const generateAiScript = async () => {
     if (!aiPrompt.trim()) return;
+    
+    // API 키 유무 먼저 확인
+    if (!apiKey) {
+      addLog("[AI 오류] API 키가 설정되지 않았습니다. Vercel 환경 변수(VITE_GEMINI_API_KEY)를 확인하세요.");
+      return;
+    }
+
     setIsGenerating(true);
     addLog(`[AI] 명령 해석 시작: "${aiPrompt}"`);
 
@@ -106,11 +112,14 @@ export default function App() {
             })
           });
 
-          if (!response.ok) throw new Error(`HTTP Error: ${response.status}`);
+          if (!response.ok) {
+            const errorData = await response.json().catch(() => ({}));
+            throw new Error(`API 오류 (${response.status}): ${errorData.error?.message || response.statusText}`);
+          }
           
           const result = await response.json();
           const text = result.candidates?.[0]?.content?.parts?.[0]?.text;
-          if (!text) throw new Error('Empty response from AI');
+          if (!text) throw new Error('AI로부터 빈 응답을 받았습니다.');
           return text;
 
         } catch (error) {
@@ -126,7 +135,7 @@ export default function App() {
       addLog("[AI] 스크립트가 성공적으로 생성되었습니다.");
       setAiPrompt("");
     } catch (error) {
-      addLog(`[AI 오류] 명령어 생성에 실패했습니다. (네트워크 상태를 확인하세요)`);
+      addLog(`[AI 오류] ${error.message}`);
     } finally {
       setIsGenerating(false);
     }
